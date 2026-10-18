@@ -95,11 +95,23 @@ export class EdgeLayer {
       markerHeight: '7',
       orient: 'auto-start-reverse',
     });
-    arrowSelected.appendChild(
-      createSvg('path', {d: 'M 0 1 L 10 5 L 0 9 z', class: 'edge-arrow-head is-selected'}),
+    arrowSelected.appendChild(createSvg('path', {d: 'M 0 1 L 10 5 L 0 9 z', class: 'edge-arrow-head is-selected'}));
+
+    // seta das arestas já percorridas por uma execução
+    const arrowTraversed = createSvg('marker', {
+      id: 'edge-arrow-traversed',
+      viewBox: '0 0 10 10',
+      refX: 9,
+      refY: 5,
+      markerWidth: 7,
+      markerHeight: 7,
+      orient: 'auto-start-reverse',
+    });
+    arrowTraversed.appendChild(
+      createSvg('path', {d: 'M 0 1 L 10 5 L 0 9 z', class: 'edge-arrow-head is-traversed'}),
     );
 
-    defs.append(arrow, arrowSelected);
+    defs.append(arrow, arrowSelected, arrowTraversed);
     this.svg.append(defs, this.hitGroup, this.lineGroup, this.tempPath);
     layer.appendChild(this.svg);
     this.clearTemp();
@@ -115,15 +127,19 @@ export class EdgeLayer {
     this.tempPath.setAttribute('stroke', '');
   }
 
-  /**
-   * `offset` desloca um nó específico: é como o arraste ao vivo de um nó é
+/**
+   * `offset` desloca um nó específico: é como o arrasto ao vivo de um nó é
    * refletido nas arestas sem tocar no store (que só muda no `dragend`).
+   *
+   * `trail` marca as arestas percorridas pela execução em andamento — o desenho
+   * do caminho que o fluxo realmente tomou.
    */
   render(
     edges: readonly Edge[],
     nodes: readonly Node[],
     selectedEdgeId: string | null,
     offset?: {nodeId: string; dx: number; dy: number},
+    trail?: {active: ReadonlySet<string>; current: string | null},
   ): void {
     const byId = new Map(nodes.map((node) => [node.id, node]));
     this.hitGroup.replaceChildren();
@@ -146,14 +162,22 @@ export class EdgeLayer {
 
       const d = wirePath(from, edge.from.side, to, edge.to.side);
       const selected = edge.id === selectedEdgeId;
+      const isActive = trail?.active.has(edge.id) ?? false;
+      const isCurrent = trail?.current === edge.id;
 
       const hit = createSvg('path', {d, class: 'edge-hit', fill: 'none'});
       hit.dataset.edgeId = edge.id;
       const line = createSvg('path', {
         d,
-        class: selected ? 'edge is-selected' : 'edge',
+        class: [selected ? 'edge is-selected' : 'edge', isActive ? 'is-traversed' : '', isCurrent ? 'is-current' : '']
+          .filter(Boolean)
+          .join(' '),
         fill: 'none',
-        'marker-end': selected ? 'url(#edge-arrow-selected)' : 'url(#edge-arrow)',
+        'marker-end': isActive
+          ? 'url(#edge-arrow-traversed)'
+          : selected
+            ? 'url(#edge-arrow-selected)'
+            : 'url(#edge-arrow)',
       });
       line.dataset.edgeId = edge.id;
 

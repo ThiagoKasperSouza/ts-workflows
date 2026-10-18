@@ -27,6 +27,7 @@ const ROOT = path.resolve(process.env.WORKFLOW_ROOT ?? path.join(HERE, '..'));
 const MAX_OUTPUT_BYTES = Number(process.env.MAX_OUTPUT_BYTES ?? 262_144);
 const DEFAULT_TIMEOUT_MS = Number(process.env.DEFAULT_TIMEOUT_MS ?? 30_000);
 const MAX_TIMEOUT_MS = Number(process.env.MAX_TIMEOUT_MS ?? 600_000);
+const MAX_INPUT_BYTES = Number(process.env.MAX_INPUT_BYTES ?? 64 * 1024);
 const MAX_BODY_BYTES = 64 * 1024;
 
 /** Execuções vivas, para permitir cancelamento. */
@@ -90,6 +91,81 @@ const clampTimeout = (raw) => {
 };
 
 /**
+ * Monta o script do comando.
+ *
+ * `exports` são os nomes de variáveis que o nó quer expor ao fluxo (ex.:
+ * `IDADE`, digitada por `read`). Elas são lidas **no mesmo shell**, logo depois
+ * do comando, e enviadas por um pipe exclusivo (fd 3) — não pelo stdout, para
+ * não se misturarem com o log do terminal nem precisarem de filtragem no meio do
+ * stream. Os valores vão em base64 porque podem conter qualquer byte (quebra de
+ * linha, espaço, aspas).
+ */
+function buildScript(command, exports) {
+  const names = exports.filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name));
+  if (names.length === 0) return command;
+
+  const lines = [
+    '{',
+    "  printf '%s\\n' '__WF_VARS__' >&3",
+    // `${NOME-}` é written com escape porque, em template literal do JS, `${`
+    // abriria interpolação. Sem `eval` não há expansão indireta em sh POSIX.
+    ...names.map(
+      (name) =>
+        '  eval "__wf_val=\\${' +
+        name +
+        '-}"\n' +
+        "  printf '%s\\t%s\\n' '" +
+        name +
+        "' \"$(printf '%s' \"$__wf_val\" | base64 | tr -d '\\n')\" >&3",
+    ),
+    "  printf '%s\\n' '__WF_END__' >&3",
+    '}',
+  ];
+
+  return `${command}
+__wf_rc=$?
+${lines.join('\n')} >&3
+exit $__wf_rc`;
+}
+
+/** Lê o dump de variáveis do fd 3 e resolve as linhas `NOME<TAB>base64`. */
+function createVarReader(onVars) {
+  let buffer = '';
+  let collecting = false;
+  const vars = {};
+  const decode = (line) => {
+    const tab = line.indexOf('\t');
+    if (tab === -1) return;
+    vars[line.slice(0, tab)] = Buffer.from(line.slice(tab + 1), 'base64').toString('utf8');
+  };
+
+  return {
+    push(chunk) {
+      buffer += chunk;
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      // `collecting` é estado do reader, não do chunk: o dump chega picotado e
+      // o marcador `__WF_VARS__` quase nunca vem na mesma leitura do valor.
+      for (const line of lines) {
+        if (line === '__WF_VARS__') {
+          collecting = true;
+          continue;
+        }
+        if (line === '__WF_END__') {
+          collecting = false;
+          onVars({...vars});
+          continue;
+        }
+        if (collecting) decode(line);
+      }
+    },
+    flush() {
+      if (buffer.trim()) decode(buffer);
+    },
+  };
+}
+
+/**
  * POST /api/run -> NDJSON.
  * Cada linha é um evento: start, stdout, stderr, exit (sempre o último).
  */
@@ -117,6 +193,9 @@ async function handleRun(req, res) {
   }
 
   const timeoutMs = clampTimeout(payload.timeoutMs);
+  const exports = Array.isArray(payload.exports)
+    ? payload.exports.filter((name) => typeof name === 'string').slice(0, 16)
+    : [];
   const runId = nextRunId();
 
   res.writeHead(200, {
@@ -132,18 +211,20 @@ async function handleRun(req, res) {
   };
 
   const startedAt = Date.now();
-  emit({type: 'start', runId, command, cwd, timeoutMs});
+  emit({type: 'start', runId, command, cwd, timeoutMs, input: true, exports});
 
   // `shell: true` faz o comando rodar dentro de um `sh -c`: sinalizar o shell
   // NÃO mata o processo real (o `sleep 30` continua, segurando o pipe). Com
   // `detached` o filho vira líder de grupo e o sinal chega na árvore toda.
   const useGroup = process.platform !== 'win32';
-  const child = spawn(command, {
+  const child = spawn(buildScript(command, exports), {
     shell: true,
     detached: useGroup,
     cwd,
     env: {...process.env, TERM: 'dumb', NO_COLOR: '1', FORCE_COLOR: '0'},
-    stdio: ['ignore', 'pipe', 'pipe'],
+    // stdin vira pipe (para `read` esperar o usuário) e o fd 3 leva o dump de
+    // variáveis, separado do stdout do usuário.
+    stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
   });
 
   const signalTree = (signal) => {
@@ -166,6 +247,9 @@ async function handleRun(req, res) {
     limited: false,
     timedOut: false,
     finished: false,
+    vars: {},
+    /** Injetado logo após o spawn: escreve no stdin do processo. */
+    writeInput: null,
     timer: null,
     escalations: [],
   };
@@ -231,11 +315,29 @@ async function handleRun(req, res) {
   streamOf(child.stdout, 'stdout');
   streamOf(child.stderr, 'stderr');
 
+  // stdin: o `read` do comando fica esperando o que o usuário digitar na janela.
+  // Escrever num processo que já morreu levanta EPIPE; isso é normal no fim de
+  // um comando interativo, não um erro a propagar.
+  child.stdin.on('error', () => undefined);
+  state.writeInput = (data) => {
+    if (state.finished || child.stdin.destroyed) return false;
+    child.stdin.write(data);
+    return true;
+  };
+
+  const varReader = createVarReader((vars) => {
+    state.vars = vars;
+  });
+  child.stdio[3]?.setEncoding('utf8');
+  child.stdio[3]?.on('data', (chunk) => varReader.push(chunk));
+
   const finish = (code, signal) => {
     if (state.finished) return;
     state.finished = true;
     clearTimeout(state.timer);
     for (const timer of state.escalations) clearTimeout(timer);
+    child.stdin.end();
+    varReader.flush();
     running.delete(runId);
     emit({
       type: 'exit',
@@ -245,6 +347,7 @@ async function handleRun(req, res) {
       durationMs: Date.now() - startedAt,
       truncated: state.truncated,
       timedOut: state.timedOut,
+      vars: state.vars,
     });
     res.end();
   };
@@ -269,6 +372,33 @@ function handleCancel(res, runId) {
   }
   state.signalTree('SIGTERM');
   sendJson(res, 200, {ok: true, runId});
+}
+
+/** POST /api/runs/:id/input — escreve no stdin (o que o `read` está esperando). */
+async function handleInput(req, res, runId) {
+  const state = running.get(runId);
+  if (!state || state.finished) {
+    sendJson(res, 404, {error: 'Execução não encontrada ou já terminou'});
+    return;
+  }
+  let payload;
+  try {
+    payload = await readJson(req);
+  } catch (error) {
+    sendJson(res, 400, {error: error.message});
+    return;
+  }
+  const data = typeof payload.data === 'string' ? payload.data : '';
+  if (!data) {
+    sendJson(res, 400, {error: 'Informe o texto de entrada'});
+    return;
+  }
+  if (data.length > MAX_INPUT_BYTES) {
+    sendJson(res, 413, {error: 'Entrada grande demais'});
+    return;
+  }
+  const written = state.writeInput?.(data) ?? false;
+  sendJson(res, written ? 200 : 409, written ? {ok: true, runId} : {error: 'Processo não está mais lendo'});
 }
 
 const server = createServer((req, res) => {
@@ -307,6 +437,15 @@ const server = createServer((req, res) => {
   const cancel = path.match(/^\/api\/runs\/([\w-]+)\/cancel$/);
   if (req.method === 'POST' && cancel) {
     handleCancel(res, cancel[1]);
+    return;
+  }
+
+  const input = path.match(/^\/api\/runs\/([\w-]+)\/input$/);
+  if (req.method === 'POST' && input) {
+    handleInput(req, res, input[1]).catch((error) => {
+      if (!res.headersSent) sendJson(res, 500, {error: error.message});
+      else res.end();
+    });
     return;
   }
 

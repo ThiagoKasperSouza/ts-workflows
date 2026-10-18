@@ -385,6 +385,8 @@ body {
 }
 
 .node-body {
+  /* base das dicas posicionadas (sim/não do losango, ▶ do nó inicial) */
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -469,159 +471,6 @@ body {
   outline-color: #7dd3fc;
 }
 
-/* ---------------------------------------------------------- run console */
-
-.run-console {
-  display: flex;
-  flex-direction: column;
-  height: 40%;
-  min-height: 180px;
-  background: #0b1220;
-  border-top: 1px solid #1e293b;
-  color: #e2e8f0;
-}
-
-.run-console[hidden] {
-  display: none;
-}
-
-.run-console-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 10px;
-  background: #0f172a;
-  border-bottom: 1px solid #1e293b;
-}
-
-.run-console-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: #e2e8f0;
-}
-
-.run-console-status {
-  font-size: 11px;
-  color: #94a3b8;
-}
-
-.run-console-status[data-status='ok'] {
-  color: #4ade80;
-}
-
-.run-console-status[data-status='error'] {
-  color: #f87171;
-}
-
-.run-console-status[data-status='running'] {
-  color: #7dd3fc;
-}
-
-.run-console-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-}
-
-.run-console-actions button {
-  height: 26px;
-  padding: 0 10px;
-  border: 1px solid #334155;
-  border-radius: 6px;
-  background: #1e293b;
-  color: #e2e8f0;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.run-console-actions button:hover:not(:disabled) {
-  background: #334155;
-}
-
-.run-console-actions button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.run-console-run {
-  border-color: #2563eb !important;
-  background: #1d4ed8 !important;
-}
-
-.run-console-run kbd {
-  font: 10px ui-monospace, monospace;
-  opacity: 0.75;
-}
-
-.run-console-body {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  gap: 4px;
-  padding: 8px 10px;
-}
-
-.run-console-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #64748b;
-}
-
-.run-console-input {
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid #334155;
-  border-radius: 6px;
-  background: #020617;
-  color: #e2e8f0;
-  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-  resize: vertical;
-}
-
-.run-console-input:focus {
-  outline: none;
-  border-color: #2563eb;
-}
-
-.run-console-output {
-  flex: 1;
-  min-height: 0;
-  margin: 4px 0 0;
-  padding: 6px 2px;
-  overflow: auto;
-  background: #020617;
-  border: 1px solid #1e293b;
-  border-radius: 6px;
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.run-console-line {
-  display: inline;
-}
-
-.run-console-line.is-stdout {
-  color: #cbd5e1;
-}
-
-.run-console-line.is-stderr {
-  color: #fca5a5;
-}
-
-.run-console-line.is-meta {
-  color: #64748b;
-}
-
-.run-console-line.is-command {
-  color: #7dd3fc;
-}
-
 /* ------------------------------------------------------------------ ports */
 
 .port {
@@ -635,15 +484,24 @@ body {
   background: #94a3b8;
   box-shadow: 0 0 0 1px #64748b;
   cursor: crosshair;
-  opacity: 0;
+  /* Sempre visível no modo de edição: uma porta só aparecendo no hover é
+     indistinguível de "não existe", e sem ela não há como saber onde ligar. */
+  opacity: 0.55;
+  transition: opacity 120ms ease, scale 120ms ease;
   touch-action: none;
   z-index: 2;
 }
 
 .node:hover .port,
 .port[data-active],
-.port[data-hover] {
+.port[data-hover],
+.port:focus-visible {
   opacity: 1;
+}
+
+.port:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .port-n {
@@ -679,11 +537,165 @@ body {
 .port:hover,
 .port[data-active] {
   background: var(--accent);
+  scale: 1.25;
 }
 
 .port[data-hover] {
   background: var(--accent);
   transform: translate(-50%, -50%) scale(1.35);
+}
+
+/* No losango a lateral É o lado do resultado: as portas saem coloridas para
+   não depender de saber qual botão é o da direita. */
+.node[data-kind='diamond'] .port-e {
+  background: #22c55e;
+  box-shadow: 0 0 0 1px #15803d;
+}
+
+.node[data-kind='diamond'] .port-w {
+  background: #f87171;
+  box-shadow: 0 0 0 1px #b91c1c;
+}
+
+.node[data-kind='diamond'] .port-e:hover,
+.node[data-kind='diamond'] .port-e[data-hover],
+.node[data-kind='diamond'] .port-e[data-active] {
+  background: #16a34a;
+  scale: 1.35;
+}
+
+.node[data-kind='diamond'] .port-w:hover,
+.node[data-kind='diamond'] .port-w[data-hover],
+.node[data-kind='diamond'] .port-w[data-active] {
+  background: #dc2626;
+  scale: 1.35;
+}
+
+/* as portas inativas do losango (n/s) ficam translúcidas: elas não saem saída */
+.node[data-kind='diamond'] .port-n,
+.node[data-kind='diamond'] .port-s {
+  opacity: 0.25;
+}
+
+/* ------------------------------------------------------------------- modo */
+
+.mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px !important;
+  font-weight: 600;
+}
+
+.mode-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2563eb;
+}
+
+[data-mode='run'] .mode-dot {
+  background: #16a34a;
+  box-shadow: 0 0 0 3px #bbf7d0;
+}
+
+[data-mode='run'] .toolbar button[data-action='run-flow'],
+[data-mode='run'] .toolbar button[data-action='cancel-flow'] {
+  border-color: #16a34a;
+  color: #166534;
+}
+
+[data-mode='run'] .palette[data-locked='true'] {
+  opacity: 0.45;
+}
+
+[data-mode='run'] .palette[data-locked='true'] .palette-item {
+  cursor: not-allowed;
+}
+
+[data-mode='run'] .node-body {
+  cursor: default;
+}
+
+/* no modo de execução as portas somem: não há ligação para fazer */
+[data-mode='run'] .port {
+  display: none;
+}
+
+/* nó de início: convida ao clique */
+[data-mode='run'] .node[data-start='true'] .node-body {
+  cursor: pointer;
+}
+
+[data-mode='run'] .node[data-start='true'] .node-body::after {
+  content: '▶';
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  translate: 0 -50%;
+  color: #16a34a;
+  font-size: 12px;
+}
+
+[data-mode='run'] .node[data-start='true']:hover .node-body {
+  outline: 3px solid #16a34a;
+}
+
+[data-mode='run'] .hint strong {
+  color: var(--text);
+}
+
+/* ---------------------------------------------------- dicas do losango */
+
+.node-hints {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font: 700 9px/1 system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.node-hint {
+  position: absolute;
+  /* na altura do meio: o clip-path do losango corta os cantos, então as dicas
+     precisam ficar junto dos vértices esquerdo/direito para não sumirem */
+  top: 50%;
+  translate: 0 -50%;
+  color: #b45309;
+}
+
+.node-hint.is-false {
+  left: 10px;
+}
+
+.node-hint.is-true {
+  right: 10px;
+  color: #15803d;
+}
+
+.node-hint.is-false::after,
+.node-hint.is-true::before {
+  position: absolute;
+  top: -2px;
+  font-size: 11px;
+}
+
+.node-hint.is-false::after {
+  content: '←';
+  left: -11px;
+}
+
+.node-hint.is-true::before {
+  content: '→';
+  right: -11px;
+}
+
+/* --------------------------------------------- Condition no painel (run) */
+
+.node-inspector[data-locked='true'] .is-input {
+  background: #f1f5f9;
+  color: var(--muted);
 }
 
 /* ------------------------------------------------------------------ toast */
@@ -706,4 +718,481 @@ body {
 .toast[data-visible='true'] {
   opacity: 1;
   translate: -50% 0;
+}
+
+/* --------------------------------------------------- estados de execução */
+
+.node[data-run='running'] .node-body {
+  outline: 3px solid #7dd3fc;
+  outline-offset: 3px;
+  animation: node-pulse 1.1s ease-in-out infinite;
+}
+
+.node[data-run='ok'] .node-body {
+  outline: 3px solid #22c55e;
+  outline-offset: 3px;
+}
+
+.node[data-run='error'] .node-body {
+  outline: 3px solid #ef4444;
+  outline-offset: 3px;
+}
+
+.node[data-run='canceled'] .node-body {
+  outline: 3px dashed #f59e0b;
+  outline-offset: 3px;
+}
+
+.node[data-run='skipped'] .node-body {
+  opacity: 0.45;
+}
+
+@keyframes node-pulse {
+  0%,
+  100% {
+    outline-color: #7dd3fc;
+  }
+  50% {
+    outline-color: #1d4ed8;
+  }
+}
+
+.edge.is-traversed {
+  stroke: #22c55e;
+  stroke-width: 3;
+}
+
+.edge.is-current {
+  stroke: #7dd3fc;
+  stroke-width: 4;
+  stroke-dasharray: 8 5;
+  animation: edge-dash 600ms linear infinite;
+}
+
+@keyframes edge-dash {
+  to {
+    stroke-dashoffset: -26;
+  }
+}
+
+.edge-arrow-head.is-traversed {
+  fill: #22c55e;
+}
+
+/* --------------------------------------------------- painel do nó terminal */
+
+.node-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+
+.node-inspector[hidden] {
+  display: none;
+}
+
+.node-inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.node-inspector-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.node-inspector-state {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.node-inspector-state[data-state='running'] {
+  color: #0284c7;
+}
+
+.node-inspector-state[data-state='ok'] {
+  color: #16a34a;
+}
+
+.node-inspector-state[data-state='error'] {
+  color: var(--danger);
+}
+
+.node-inspector-state[data-state='canceled'] {
+  color: #b45309;
+}
+
+.node-inspector-detail {
+  font: 11px ui-monospace, monospace;
+  color: var(--muted);
+}
+
+.node-inspector-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.node-inspector-actions button {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.node-inspector-actions button:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.node-inspector-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.node-inspector-actions .is-run {
+  border-color: #2563eb;
+  background: var(--accent);
+  color: #fff;
+}
+
+.node-inspector-actions kbd {
+  font: 10px ui-monospace, monospace;
+  opacity: 0.8;
+}
+
+.is-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.is-input {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #f8fafc;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+}
+
+.is-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: #fff;
+}
+
+.is-fields {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.is-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.is-field.is-narrow {
+  flex: 0 0 220px;
+}
+
+.is-help {
+  margin: 4px 0 0;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.is-help code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: #f1f5f9;
+  font: 10px ui-monospace, monospace;
+}
+
+.is-exposes {
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .is-fields {
+    flex-direction: column;
+  }
+  .is-field.is-narrow {
+    flex: 1;
+  }
+}
+
+.is-output-wrap {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.is-output-wrap[hidden] {
+  display: none;
+}
+
+.is-output-wrap summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.is-output-hint {
+  color: #94a3b8;
+}
+
+.is-output {
+  max-height: 130px;
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border-radius: 7px;
+  background: #020617;
+  color: #cbd5e1;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* linhas do console: cores iguais às da janela do terminal */
+.run-console-line.is-stdout {
+  color: #cbd5e1;
+}
+
+.run-console-line.is-stderr {
+  color: #fca5a5;
+}
+
+.run-console-line.is-meta {
+  color: #64748b;
+}
+
+.run-console-line.is-command {
+  color: #7dd3fc;
+}
+
+/* ------------------------------------------------- histórico de execuções */
+
+.runs {
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.run-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 4px;
+  overflow: hidden;
+}
+
+.run-row[data-status='running'] {
+  border-color: #7dd3fc;
+}
+
+.run-row[data-status='error'] {
+  border-color: #fecaca;
+}
+
+.run-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.run-head:hover {
+  background: #f8fafc;
+}
+
+.run-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+  flex: none;
+}
+
+.run-row[data-status='running'] .run-dot {
+  background: #38bdf8;
+  animation: node-pulse 1.1s ease-in-out infinite;
+}
+
+.run-row[data-status='ok'] .run-dot {
+  background: #22c55e;
+}
+
+.run-row[data-status='error'] .run-dot {
+  background: #ef4444;
+}
+
+.run-row[data-status='canceled'] .run-dot {
+  background: #f59e0b;
+}
+
+.run-name {
+  flex: 1;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-meta {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-steps {
+  border-top: 1px solid var(--border);
+  background: #f8fafc;
+  padding: 4px 6px;
+}
+
+.run-step {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.run-step:hover {
+  background: #e2e8f0;
+}
+
+.run-step-index {
+  width: 14px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.run-step-label {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-step[data-status='error'] .run-step-label {
+  color: var(--danger);
+}
+
+.run-step[data-status='ok'] .run-step-label {
+  color: #15803d;
+}
+
+.run-step[data-status='canceled'] .run-step-label {
+  color: #b45309;
+}
+
+.run-step-detail {
+  flex: 1;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-error {
+  margin: 4px 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: #fee2e2;
+  color: #991b1b;
+  font-size: 11px;
+}
+
+/* ------------------------------------------ condição e lados das saídas */
+
+.outline-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.outline-condition {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #f8fafc;
+  font: 10px ui-monospace, monospace;
+  color: #475569;
+  cursor: pointer;
+}
+
+button.outline-condition:hover {
+  border-color: #93c5fd;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+span.outline-condition {
+  cursor: default;
+}
+
+.outline-branch {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.outline-branch[data-branch='true'] {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.outline-branch[data-branch='false'] {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.outline-row[data-run='running'] .outline-swatch {
+  border-color: #38bdf8;
+}
+
+.outline-row[data-run='ok'] .outline-swatch {
+  border-color: #22c55e;
+}
+
+.outline-row[data-run='error'] .outline-swatch {
+  border-color: #ef4444;
+}
+
+.outline-row[data-run='skipped'] {
+  opacity: 0.5;
 }

@@ -3,12 +3,29 @@ import type {DragDropManager, Draggable} from '@dnd-kit/dom';
 import type {EdgeLayer} from './edges';
 import {nodeAnchor} from './edges';
 import type {Store} from './store';
-import type {Anchor, Side} from './types';
+import type {Anchor, Page, Side} from './types';
 import {addEdge, connectionError} from './commands';
+
 import {CONNECTOR_DRAG_TYPE} from './nodes';
 import type {ViewportController} from './viewport';
 
 const OPPOSITE: Record<Side, Side> = {n: 's', s: 'n', e: 'w', w: 'e'};
+
+/**
+ * Confirma em texto qual lado da decisão acabou de ser ligado. Sem isso, o
+ * único jeito de saber se pegou a porta do "sim" ou do "não" é lembrar de qual
+ * lado arrastou.
+ *
+ * Usa a lateral, e não a arista criada: `addEdge` já devolveu e o `store`
+ * clona o estado, então o objeto de página que temos aqui ainda é o anterior.
+ */
+function branchNotice(page: Page, from: Anchor): string | null {
+  const node = page.nodes.find((item) => item.id === from.nodeId);
+  if (node?.kind !== 'diamond') return null;
+  if (from.side === 'e') return 'Ligação do lado do SIM (direita) criada';
+  if (from.side === 'w') return 'Ligação do lado do NÃO (esquerda) criada';
+  return null;
+}
 
 function anchorData(source: Draggable | null): Anchor | null {
   const data = source?.data as Anchor | undefined;
@@ -35,6 +52,8 @@ export class ConnectorController {
       edgeLayer: EdgeLayer;
       viewport: ViewportController;
       onInvalid: (reason: string) => void;
+      /** Aviso de ligação criada (usado para confirmar o lado de uma decisão). */
+      onNotice?: (message: string) => void;
     },
   ) {
     const {monitor} = manager;
@@ -124,6 +143,8 @@ export class ConnectorController {
       return;
     }
     addEdge(this.deps.store, origin, target);
+    const notice = branchNotice(page, origin);
+    if (notice) this.deps.onNotice?.(notice);
   };
 
   private onKeyDown = (event: KeyboardEvent): void => {

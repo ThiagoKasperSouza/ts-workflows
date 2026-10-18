@@ -2,6 +2,7 @@ import {DragDropManager, Draggable, Droppable, Feedback, PointerSensor, PointerA
 
 import type {Node, Page, Point, Selection, ShapeKind, Side} from './types';
 import {SIDES} from './types';
+import {isStartNode} from './engine';
 
 export const NODE_DRAG_TYPE = 'node';
 export const CONNECTOR_DRAG_TYPE = 'connector';
@@ -57,6 +58,12 @@ class PortView {
     readonly nodeId: string,
     readonly side: Side,
     parent: HTMLElement,
+    /**
+     * `true` quando esta porta não pode iniciar uma ligação — no losango, as
+     * laterais de cima e de baixo são só de entrada, porque as duas saídas
+     * (direita = sim, esquerda = não) têm lado reservado.
+     */
+    readonly sourceOnlyBlocked = false,
   ) {
     this.el = el('button', `port port-${side}`);
     this.el.type = 'button';
@@ -74,6 +81,7 @@ class PortView {
         type: CONNECTOR_DRAG_TYPE,
         data: {nodeId, side},
         sensors: [ConnectorSensor],
+        disabled: sourceOnlyBlocked,
         plugins: [
           // 'none' NÃO pode ser usado aqui: o plugin Feedback sai cedo nesse
           // caso e nunca publica `dragOperation.shape`, e `computeCollisions`
@@ -108,6 +116,12 @@ class PortView {
     this.droppable.destroy();
     this.el.remove();
   }
+
+  /** Modo de execução: sem arrasto de porta, ninguém liga nada por acidente. */
+  setInteractive(on: boolean): void {
+    this.draggable.disabled = !on || this.sourceOnlyBlocked;
+    this.droppable.disabled = !on;
+  }
 }
 
 export class NodeView {
@@ -124,7 +138,6 @@ export class NodeView {
     private readonly handlers: {
       onSelect: (selection: Selection) => void;
       onRename: (node: Node) => void;
-      onEditCommand?: (node: Node) => void;
     },
   ) {
     this.el = el('div', 'node');
@@ -138,7 +151,9 @@ export class NodeView {
     this.el.appendChild(this.bodyEl);
 
     for (const side of SIDES) {
-      this.ports.set(side, new PortView(manager, node.id, side, this.el));
+      // no losango, n/s são entradas; e/w são as duas saídas (sim/não)
+      const blocked = node.kind === 'diamond' && (side === 'n' || side === 's');
+      this.ports.set(side, new PortView(manager, node.id, side, this.el, blocked));
     }
 
     this.el.addEventListener('pointerdown', (event) => {
@@ -156,11 +171,10 @@ export class NodeView {
     });
     this.bodyEl.addEventListener('dblclick', (event) => {
       event.stopPropagation();
-      // Duplo clique num terminal edita o comando (no painel), não o rótulo.
-      if (node.kind === 'terminal' && this.handlers.onEditCommand) {
-        this.handlers.onEditCommand(node);
-        return;
-      }
+      // Duplo clique é sempre "renomear", para qualquer tipo de nó. Comando e
+      // condição têm controles próprios (painel do terminal e a etiqueta de
+      // condição na barra lateral) — especializar o duplo clique por tipo fazia o
+      // losango ficar sem nenhum jeito de trocar o nome pela interface.
       this.handlers.onRename(node);
     });
 
@@ -181,6 +195,7 @@ export class NodeView {
 
   /** Espelho do modelo no DOM. Só mexe no que mudou. */
   apply(node: Node): void {
+    this.el.dataset.kind = node.kind;
     this.el.style.width = `${node.w}px`;
     this.el.style.height = `${node.h}px`;
     // `transform` (e não a propriedade `translate`) é a posição de repouso: o
@@ -193,6 +208,7 @@ export class NodeView {
       else this.bodyEl.appendChild(el('span', 'node-label')).textContent = node.label;
     }
     this.applyCommand(node);
+    this.applyDecisionHints(node);
     this.bodyEl.className = `node-body ${shape(node.kind)}`;
   }
 
@@ -216,8 +232,61 @@ export class NodeView {
     preview.title = node.command ?? '';
   }
 
+  /**
+   * O losango diz no próprio corpo para que lado é qual: sem isso o usuário só
+   * descobre qual saída é o "sim" depois de rodar o fluxo.
+   */
+  private applyDecisionHints(node: Node): void {
+    const hints = this.bodyEl.querySelector<HTMLElement>('.node-hints');
+    if (node.kind !== 'diamond') {
+      hints?.remove();
+      return;
+    }
+    if (!hints) {
+      const box = el('span', 'node-hints');
+      box.append(
+        Object.assign(el('span', 'node-hint is-false'), {textContent: 'não'}),
+        Object.assign(el('span', 'node-hint is-true'), {textContent: 'sim'}),
+      );
+      this.bodyEl.appendChild(box);
+    }
+  }
+
+  private runState: string | null = null;
+
   setSelected(selected: boolean): void {
     this.el.dataset.selected = selected ? 'true' : 'false';
+  }
+
+  /**
+   * Estado da execução (running/ok/error/skipped) desenhado no nó. Vai no
+   * `dataset` para o CSS fazer o destaque — nada de criar elementos novos, que
+   * quebrariam o handle de arrasto do dnd-kit.
+   */
+  setRunState(state: string | null): void {
+    if (this.runState === state) return;
+    this.runState = state;
+    if (state) this.el.dataset.run = state;
+    else delete this.el.dataset.run;
+  }
+
+  /**
+   * Marca o nó de início (elipse sem entrada, com saída). Só interessa no modo
+   * de execução, onde clicar nele dispara o fluxo — o cursor e o ▶ vêm do CSS.
+   */
+  setStart(start: boolean): void {
+    if (start) this.el.dataset.start = 'true';
+    else delete this.el.dataset.start;
+  }
+
+  /**
+   * Modo edição: habilita arrasto do nó e das portas. No modo de execução o nó
+   * fica travado no lugar — mexer no desenho não faz sentido enquanto o fluxo
+   * roda.
+   */
+  setInteractive(on: boolean): void {
+    this.draggable.disabled = !on;
+    for (const port of this.ports.values()) port.setInteractive(on);
   }
 
   /** `portId` → `{nodeId, side}` das portas deste nó, para validar arestas. */
@@ -238,12 +307,16 @@ export class NodeLayer {
     private readonly handlers: {
       onSelect: (selection: Selection) => void;
       onRename: (node: Node) => void;
-      onEditCommand?: (node: Node) => void;
     },
   ) {}
 
   /** Reconciliação por id: nós existentes são reaproveitados, nunca recriados. */
-  render(page: Page, selection: Selection): void {
+  render(
+    page: Page,
+    selection: Selection,
+    runStates?: ReadonlyMap<string, string>,
+    interactive = true,
+  ): void {
     const seen = new Set<string>();
 
     for (const node of page.nodes) {
@@ -256,6 +329,9 @@ export class NodeLayer {
       }
       view.apply(node);
       view.setSelected(selection?.type === 'node' && selection.id === node.id);
+      view.setRunState(runStates?.get(node.id) ?? null);
+      view.setInteractive(interactive);
+      view.setStart(isStartNode(page, node));
     }
 
     for (const [id, view] of [...this.views]) {

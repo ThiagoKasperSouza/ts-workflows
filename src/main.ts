@@ -2,15 +2,25 @@ import {DragDropManager, Droppable} from '@dnd-kit/dom';
 
 import './style.css';
 
-import {loadStore} from './store';
-import {createNode, type Node, type ShapeKind} from './types';
+import {loadStore, type Store} from './store';
+import {createNode, type Node, type Selection, type ShapeKind} from './types';
 import {ViewportController} from './viewport';
 import {EdgeLayer} from './edges';
 import {NodeLayer, WORLD, CANVAS_ID, NODE_DRAG_TYPE, PALETTE_DRAG_TYPE} from './nodes';
 import {Sidebar} from './sidebar';
-import {TerminalConsole} from './console';
+import {NodeInspector} from './console';
+import {TerminalWindows, terminalWindowDocument} from './terminal-window';
+import {ExecutionEngine, type ExecutionSnapshot} from './execution';
+import {isStartNode} from './engine';
+import {ModeController, MODE_LABEL} from './mode';
 import {ConnectorController} from './connectors';
-import {addNode, deleteSelection, moveNode, renameNode, replaceAllPages} from './commands';
+import {
+  addNode,
+  deleteSelection,
+  moveNode,
+  renameNode,
+  replaceAllPages,
+} from './commands';
 import {exportJson, exportSvg, isDocument} from './io';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -19,6 +29,11 @@ app.innerHTML = `
   <aside class="sidebar"></aside>
   <main class="workspace">
     <header class="toolbar">
+      <div class="toolbar-group">
+        <button type="button" data-action="toggle-mode" class="mode-toggle" title="Alternar edição / execução (E)">
+          <span class="mode-dot"></span><span data-mode-label>Edição</span>
+        </button>
+      </div>
       <div class="toolbar-group">
         <button type="button" data-action="undo" title="Desfazer (Ctrl+Z)">↶</button>
         <button type="button" data-action="redo" title="Refazer (Ctrl+Shift+Z)">↷</button>
@@ -30,16 +45,20 @@ app.innerHTML = `
         <button type="button" data-action="zoom-reset" title="Restaurar zoom (0)">⟲</button>
       </div>
       <div class="toolbar-group">
+        <button type="button" data-action="run-flow" title="Executar o fluxo a partir do nó início selecionado" hidden>▶ Executar fluxo</button>
+        <button type="button" data-action="cancel-flow" title="Cancelar a execução em andamento" hidden>■ Cancelar</button>
+      </div>
+      <div class="toolbar-group">
         <button type="button" data-action="export-json" title="Exportar JSON">⤓ JSON</button>
         <button type="button" data-action="export-svg" title="Exportar SVG">⤓ SVG</button>
         <button type="button" data-action="import" title="Importar JSON">⤒ Importar</button>
       </div>
-      <p class="hint">Paleta → canvas para criar · arraste entre bolinhas para ligar · nó terminal: duplo clique edita o comando, Ctrl+Enter executa · Delete remove a seleção · roda = pan · Ctrl+roda = zoom</p>
+      <p class="hint" data-hint>Paleta → canvas para criar · arraste entre bolinhas para ligar · duplo clique: terminal edita comando, losango edita condição · Delete remove a seleção · roda = pan · Ctrl+roda = zoom</p>
     </header>
     <div class="surface" data-empty="true">
       <div class="layer" data-empty="true"></div>
     </div>
-    <section class="run-console" data-console hidden></section>
+    <section class="node-inspector" data-inspector hidden></section>
   </main>
   <div class="toast" data-toast hidden></div>
   <input type="file" accept=".json,application/json" hidden data-file />`;
@@ -47,7 +66,7 @@ app.innerHTML = `
 const surface = app.querySelector<HTMLDivElement>('.surface')!;
 const layer = app.querySelector<HTMLDivElement>('.layer')!;
 const sidebarRoot = app.querySelector<HTMLElement>('.sidebar')!;
-const consoleRoot = app.querySelector<HTMLElement>('[data-console]')!;
+const inspectorRoot = app.querySelector<HTMLElement>('[data-inspector]')!;
 const toast = app.querySelector<HTMLDivElement>('[data-toast]')!;
 const fileInput = app.querySelector<HTMLInputElement>('[data-file]')!;
 const zoomLabel = app.querySelector<HTMLElement>('[data-zoom]')!;
@@ -55,15 +74,39 @@ const zoomLabel = app.querySelector<HTMLElement>('[data-zoom]')!;
 const store = loadStore();
 const manager = new DragDropManager();
 
+/** Último snapshot do motor de workflow (null antes da primeira execução). */
+let latestExecution: ExecutionSnapshot | null = null;
+
 // O SVG precisa vir antes dos nós no DOM para renderizar atrás deles.
 const edgeLayer = new EdgeLayer(layer);
 
 const viewport = new ViewportController(surface, layer, () => updateZoomLabel());
 
-const runConsole = new TerminalConsole(consoleRoot, {store, onError: showToast});
+const windows = new TerminalWindows();
+const engine = new ExecutionEngine({store, sink: windows, onToast: showToast});
+
+const mode = new ModeController(app, () => render());
+
+const inspector = new NodeInspector(inspectorRoot, {store, engine, onError: showToast});
 
 const nodeLayer = new NodeLayer(manager, layer, {
   onSelect: (selection) => {
+    // No modo de execução, clicar no nó de início dispara o fluxo; no modo de
+    // edição o mesmo clique apenas seleciona (para poder ligar e configurar).
+    if (selection?.type === 'node' && !mode.isEdit) {
+      const page = store.activePage();
+      const node = page.nodes.find((item) => item.id === selection.id);
+      if (node && isStartNode(page, node)) {
+        store.update(
+          (draft) => {
+            draft.selection = selection;
+          },
+          {history: false},
+        );
+        void engine.run(node.id);
+        return;
+      }
+    }
     store.update(
       (draft) => {
         draft.selection = selection;
@@ -72,23 +115,16 @@ const nodeLayer = new NodeLayer(manager, layer, {
     );
   },
   onRename: (node) => {
-    const next = window.prompt('Rótulo do nó', node.label);
+    if (!mode.isEdit) return;
+    const next = window.prompt('Nome do nó', node.label);
     if (next) renameNode(store, node.id, next);
-  },
-  onEditCommand: (node) => {
-    // seleciona o nó e joga o foco no campo de comando do painel
-    store.update(
-      (draft) => {
-        draft.selection = {type: 'node', id: node.id};
-      },
-      {history: false},
-    );
-    consoleRoot.querySelector<HTMLTextAreaElement>('.run-console-input')?.focus();
   },
 });
 
 const sidebar = new Sidebar(sidebarRoot, manager, {
   store,
+  engine,
+  isEdit: () => mode.isEdit,
   onDropShape: (kind: ShapeKind) => {
     const center = viewport.viewportCenter();
     addNode(store, createNode(kind, center.x, center.y));
@@ -102,6 +138,7 @@ new ConnectorController(manager, {
   edgeLayer,
   viewport,
   onInvalid: showToast,
+  onNotice: showToast,
 });
 
 /**
@@ -221,7 +258,7 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   if (event.key === 'Delete' || event.key === 'Backspace') {
-    if (typing) return;
+    if (typing || !mode.isEdit) return;
     event.preventDefault();
     deleteSelection(store);
     return;
@@ -229,6 +266,10 @@ window.addEventListener('keydown', (event) => {
   if (typing) return;
   if (event.key === '0' && !meta) {
     viewport.reset();
+    return;
+  }
+  if (event.key.toLowerCase() === 'e') {
+    mode.toggle();
     return;
   }
   if (event.key === '+' || event.key === '=') {
@@ -244,7 +285,10 @@ const zoomCenter = (factor: number) => {
 };
 
 app.addEventListener('click', (event) => {
-  const action = (event.target as HTMLElement).dataset?.action;
+  // `closest` e não `target`: os botões têm filhos (o ponto do toggle, o
+  // <kbd> do atalho) e o clique neles precisa valer como o botão.
+  const action = (event.target as HTMLElement).closest<HTMLElement>('[data-action]')?.dataset
+    .action;
   if (!action) return;
   switch (action) {
     case 'undo':
@@ -270,6 +314,17 @@ app.addEventListener('click', (event) => {
       break;
     case 'import':
       fileInput.click();
+      break;
+    case 'run-flow': {
+      const start = selectedStartNode(store.activePage(), store.get().selection);
+      if (start) void engine.run(start.id);
+      break;
+    }
+    case 'cancel-flow':
+      void engine.cancel();
+      break;
+    case 'toggle-mode':
+      mode.toggle();
       break;
   }
 });
@@ -307,28 +362,58 @@ function updateZoomLabel(): void {
 function render(): void {
   const state = store.get();
   const page = store.activePage();
+  const execution = latestExecution;
 
-  nodeLayer.render(page, state.selection);
+  // O rastro fica depois do fim da execução de propósito: o desenho do caminho
+  // percorrido é a informação mais útil depois que o fluxo rodou.
+  nodeLayer.render(page, state.selection, execution?.nodeStates, mode.isEdit);
   edgeLayer.render(
     page.edges,
     page.nodes,
     state.selection?.type === 'edge' ? state.selection.id : null,
+    undefined,
+    execution?.currentRun
+      ? {active: execution.activeEdges, current: execution.currentEdge}
+      : undefined,
   );
   sidebar.render(page, state.pages, state.selection);
+  sidebar.setInteractive(mode.isEdit);
+  inspector.sync(selectedNode(page, state.selection));
+  inspector.paintState();
+  applyMode();
 
   const button = (action: string) =>
     app.querySelector<HTMLButtonElement>(`[data-action="${action}"]`);
-  button('undo')!.disabled = !store.canUndo();
-  button('redo')!.disabled = !store.canRedo();
-
-  // o painel pertence ao nó terminal selecionado
-  runConsole.retain(new Set(page.nodes.map((node) => node.id)));
-  runConsole.sync(
-    state.selection?.type === 'node'
-      ? (page.nodes.find((node) => node.id === state.selection!.id) ?? null)
-      : null,
-  );
+  button('undo')!.disabled = !store.canUndo() || !mode.isEdit;
+  button('redo')!.disabled = !store.canRedo() || !mode.isEdit;
+  button('run-flow')!.hidden = mode.isEdit || !selectedStartNode(page, state.selection);
+  button('cancel-flow')!.hidden = execution?.currentRun?.status !== 'running';
 }
+
+/** Reflete o modo na UI: rótulo do toggle, dica contextual e trancas. */
+function applyMode(): void {
+  app.querySelector<HTMLElement>('[data-mode-label]')!.textContent = MODE_LABEL[mode.mode];
+  app.querySelector<HTMLElement>('[data-hint]')!.innerHTML =
+    mode.mode === 'edit'
+      ? 'Arraste da paleta para criar · <strong>duplo clique</strong> renomeia · ligação: arraste entre as bolinhas · losango: <strong>direita = sim</strong>, <strong>esquerda = não</strong> · comando e condição se editam na barra lateral · <strong>E</strong> vai para execução'
+      : 'Clique no nó <strong>início</strong> para executar o fluxo · <strong>E</strong> volta para edição';
+  inspector.setInteractive(mode.isEdit);
+}
+
+const selectedNode = (
+  page: ReturnType<Store['activePage']>,
+  selection: Selection,
+): Node | null =>
+  selection?.type === 'node' ? (page.nodes.find((node) => node.id === selection.id) ?? null) : null;
+
+/** O botão "Executar fluxo" só aparece quando a seleção é um nó de início. */
+const selectedStartNode = (
+  page: ReturnType<Store['activePage']>,
+  selection: Selection,
+): Node | null => {
+  const node = selectedNode(page, selection);
+  return node && isStartNode(page, node) ? node : null;
+};
 
 let toastTimer = 0;
 
@@ -346,10 +431,18 @@ function showToast(message: string): void {
 }
 
 store.subscribe(render);
+// O motor vive fora do store, então tem o próprio render: highlights, histórico
+// e botões da toolbar são atualizados a cada evento de execução.
+engine.subscribe((snapshot) => {
+  latestExecution = snapshot;
+  render();
+});
 updateZoomLabel();
 render();
 
 if (import.meta.env.DEV) {
   // gancho de inspeção para depurar arrasto/connector no console do browser
-  Object.assign(window, {__dnd: {manager, store, viewport, edgeLayer}});
+  Object.assign(window, {
+    __dnd: {manager, store, viewport, edgeLayer, engine, windows, terminalWindowDocument},
+  });
 }

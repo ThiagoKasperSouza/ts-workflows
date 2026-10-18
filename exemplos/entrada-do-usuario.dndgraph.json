@@ -1,0 +1,68 @@
+{
+  "format": "dnd-graph",
+  "version": 1,
+  "exportedAt": "2026-01-01T00:00:00.000Z",
+  "activePageId": "page_input",
+  "pages": [
+    {
+      "id": "page_input",
+      "name": "Entrada do usuário",
+      "nodes": [
+        {
+          "id": "start",
+          "kind": "ellipse",
+          "label": "Início",
+          "x": 60,
+          "y": 250,
+          "w": 168,
+          "h": 92
+        },
+        {
+          "id": "ask",
+          "kind": "terminal",
+          "label": "perguntar idade",
+          "x": 320,
+          "y": 244,
+          "w": 220,
+          "h": 100,
+          "command": "echo \"Digite sua idade:\"; read IDADE; echo \"idade=$IDADE\"",
+          "exposes": ["IDADE"]
+        },
+        {
+          "id": "dec",
+          "kind": "diamond",
+          "label": "maior de 18?",
+          "x": 660,
+          "y": 238,
+          "w": 184,
+          "h": 112,
+          "condition": "IDADE > 18"
+        },
+        {
+          "id": "adult",
+          "kind": "ellipse",
+          "label": "adulto",
+          "x": 1000,
+          "y": 120,
+          "w": 180,
+          "h": 92
+        },
+        {
+          "id": "minor",
+          "kind": "ellipse",
+          "label": "menor de 18",
+          "x": 1000,
+          "y": 380,
+          "w": 180,
+          "h": 92
+        }
+      ],
+      "edges": [
+        { "id": "e1", "from": { "nodeId": "start", "side": "e" }, "to": { "nodeId": "ask", "side": "w" } },
+        { "id": "e2", "from": { "nodeId": "ask", "side": "e" }, "to": { "nodeId": "dec", "side": "w" } },
+        { "id": "e_yes", "from": { "nodeId": "dec", "side": "e" }, "to": { "nodeId": "adult", "side": "w" } },
+        { "id": "e_no", "from": { "nodeId": "dec", "side": "w" }, "to": { "nodeId": "minor", "side": "e" } }
+      ]
+    }
+  ]
+}

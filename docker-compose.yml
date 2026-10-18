@@ -10,5 +10,35 @@ services:
     environment:
       - OLLAMA_HOST=0.0.0.0
 
+  # Executor de comandos dos nós "terminal" e do motor de workflow.
+  # Confinado no WORKFLOW_ROOT: nenhum comando consegue escapar do workspace.
+  executor:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: workflow-executor
+    ports:
+      - "127.0.0.1:5178:5178"
+    volumes:
+      # o diagrama e o código executado pelos fluxos; edite no host, rode no container
+      - .:/workspace
+      # ignora o que o próprio build gerou, para o bind mount não ficar divergente
+      - /workspace/node_modules
+    environment:
+      - WORKFLOW_ROOT=/workspace
+      - PORT=5178
+      - HOST=0.0.0.0
+      - DEFAULT_TIMEOUT_MS=30000
+      - MAX_OUTPUT_BYTES=262144
+      # evita o git "dirtiness" de um repositório montado, que faz comandos de
+      # diff/ci falharem sem motivo
+      - GIT_CONFIG_COUNT=1
+      - GIT_CONFIG_KEY_0=safe.directory
+      - GIT_CONFIG_VALUE_0=/workspace
+    # o container é destruído junto com a execução: nenhum processo sobra vivo
+    init: false
+    stop_signal: SIGTERM
+    restart: unless-stopped
+
 volumes:
   ollama-data:

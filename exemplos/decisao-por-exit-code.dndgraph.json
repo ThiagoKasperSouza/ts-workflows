@@ -1,0 +1,99 @@
+{
+  "format": "dnd-graph",
+  "version": 1,
+  "exportedAt": "2026-01-01T00:00:00.000Z",
+  "activePageId": "page_branch",
+  "pages": [
+    {
+      "id": "page_branch",
+      "name": "Decisão por exit code",
+      "nodes": [
+        {
+          "id": "start",
+          "kind": "ellipse",
+          "label": "Início",
+          "x": 80,
+          "y": 250,
+          "w": 168,
+          "h": 92
+        },
+        {
+          "id": "check",
+          "kind": "terminal",
+          "label": "checar",
+          "x": 330,
+          "y": 248,
+          "w": 208,
+          "h": 96,
+          "command": "echo \"checando o workspace\"; test -f package.json && echo \"package.json encontrado\""
+        },
+        {
+          "id": "dec",
+          "kind": "diamond",
+          "label": "deu certo?",
+          "x": 650,
+          "y": 244,
+          "w": 176,
+          "h": 104,
+          "condition": "ok"
+        },
+        {
+          "id": "ok_path",
+          "kind": "terminal",
+          "label": "sucesso",
+          "x": 980,
+          "y": 120,
+          "w": 208,
+          "h": 96,
+          "command": "echo \"-> lado do SIM (direita)\""
+        },
+        {
+          "id": "no_path",
+          "kind": "terminal",
+          "label": "falha",
+          "x": 980,
+          "y": 380,
+          "w": 208,
+          "h": 96,
+          "command": "echo \"-> lado do NÃO (esquerda)\""
+        },
+        {
+          "id": "end",
+          "kind": "ellipse",
+          "label": "Fim",
+          "x": 1290,
+          "y": 382,
+          "w": 168,
+          "h": 92
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "from": { "nodeId": "start", "side": "e" },
+          "to": { "nodeId": "check", "side": "w" }
+        },
+        {
+          "id": "e2",
+          "from": { "nodeId": "check", "side": "e" },
+          "to": { "nodeId": "dec", "side": "w" }
+        },
+        {
+          "id": "e_yes",
+          "from": { "nodeId": "dec", "side": "e" },
+          "to": { "nodeId": "ok_path", "side": "w" }
+        },
+        {
+          "id": "e_no",
+          "from": { "nodeId": "dec", "side": "w" },
+          "to": { "nodeId": "no_path", "side": "n" }
+        },
+        {
+          "id": "e3",
+          "from": { "nodeId": "no_path", "side": "e" },
+          "to": { "nodeId": "end", "side": "w" }
+        }
+      ]
+    }
+  ]
+}

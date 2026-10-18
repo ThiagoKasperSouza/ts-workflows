@@ -14,6 +14,12 @@ export interface Node {
   /** Comando executado por nós do tipo `terminal`. Ausente nos demais tipos. */
   command?: string;
   /**
+   * Variáveis do shell que este terminal expõe ao fluxo (ex.: `IDADE`, preenchida
+   * por `read`). Só elas chegam à condição da decisão; o resto da sessão do shell
+   * morre com o comando.
+   */
+  exposes?: string[];
+  /**
    * Condição de um nó de decisão (losango), avaliada contra o exit code do
    * último terminal: `exit == 0`, `exit != 0`, `ok`, `fail`…
    */
@@ -82,6 +88,9 @@ export const SHAPE_LABEL: Record<ShapeKind, string> = {
 /** Comando inicial de um nó terminal recién-criado — algo que já roda. */
 export const TERMINAL_DEFAULT_COMMAND = 'echo "hello do fluxo"';
 
+/** Condição inicial de um losango recém-criado. */
+export const TERMINAL_DEFAULT_CONDITION = 'exit == 0';
+
 let seq = 0;
 
 export function uid(prefix: string): string {
@@ -101,6 +110,7 @@ export function createNode(kind: ShapeKind, x: number, y: number): Node {
     h,
   };
   if (kind === 'terminal') node.command = TERMINAL_DEFAULT_COMMAND;
+  if (kind === 'diamond') node.condition = TERMINAL_DEFAULT_CONDITION;
   return node;
 }
 

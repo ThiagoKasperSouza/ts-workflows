@@ -1,6 +1,6 @@
 import type {Store} from './store';
-import type {Anchor, Edge, Node, Page, Selection} from './types';
-import {emptyPage, uid} from './types';
+import type {Anchor, Edge, Node, Page, Selection, Side} from './types';
+import {TERMINAL_DEFAULT_CONDITION, emptyPage, uid} from './types';
 
 function activePage(draft: {pages: Page[]; activePageId: string}): Page {
   return draft.pages.find((page) => page.id === draft.activePageId) ?? draft.pages[0]!;
@@ -48,6 +48,45 @@ export function setNodeCommand(store: Store, nodeId: string, command: string, hi
   );
 }
 
+/**
+ * Variáveis que o terminal expõe ao fluxo.
+ *
+ * Lista de nomes (identificadores de shell). Aceita vírgula/espaço como
+ * separador; nomes inválidos são silenciosamente descartados porque quem pode
+ * errar aqui é a digitação, e um aviso por variável deixaria o campo impossível
+ * de preencher incrementalmente.
+ */
+export function setNodeExposes(store: Store, nodeId: string, raw: string): void {
+  const names = [
+    ...new Set(
+      raw
+        .split(/[,\s]+/)
+        .map((name) => name.trim())
+        .filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)),
+    ),
+  ].slice(0, 16);
+  store.update(
+    (draft) => {
+      const node = activePage(draft).nodes.find((item) => item.id === nodeId);
+      if (!node) return;
+      if (names.length === 0) delete node.exposes;
+      else node.exposes = names;
+    },
+    {history: false},
+  );
+}
+
+/** Condição de um losango. Vazio volta ao default (`exit == 0`) em vez de
+ * apagar a condição: um losango sem condição não decide nada.
+ */
+export function setNodeCondition(store: Store, nodeId: string, condition: string): void {
+  const trimmed = condition.trim();
+  store.update((draft) => {
+    const node = activePage(draft).nodes.find((item) => item.id === nodeId);
+    if (node) node.condition = trimmed || TERMINAL_DEFAULT_CONDITION;
+  });
+}
+
 /** Remover um nó leva junto todas as arestas que o tocam. */
 export function removeNode(store: Store, nodeId: string): void {
   store.update((draft) => {
@@ -74,14 +113,42 @@ export function removeEdge(store: Store, edgeId: string): void {
 
 const sameAnchor = (a: Anchor, b: Anchor): boolean => a.nodeId === b.nodeId && a.side === b.side;
 
+/** Lateral de saída de um losango: direita = sim, esquerda = não. */
+const DECISION_OUT_SIDES = {e: true, w: true} as const;
+
+const isDecisionSide = (side: Side): boolean => side in DECISION_OUT_SIDES;
+
 /**
  * Regras de validade de uma ligação. Centralizadas para que a UI e o
  * `dragend` do conector nunca discordem entre si.
+ *
+ * A regra do losango é geométrica: ele tem exatamente duas saídas, uma da
+ * direita (verdadeiro) e uma da esquerda (falso). Isso é o que permite ler o
+ * fluxo pelo desenho, sem legenda e sem botão de "trocar lados".
  */
 export function connectionError(page: Page, from: Anchor, to: Anchor): string | null {
   if (from.nodeId === to.nodeId) return 'Não é possível ligar um nó a si mesmo';
-  const exists = (id: string) => page.nodes.some((node) => node.id === id);
-  if (!exists(from.nodeId) || !exists(to.nodeId)) return 'Nó inexistente';
+  const node = (id: string) => page.nodes.find((item) => item.id === id);
+  const origin = node(from.nodeId);
+  const target = node(to.nodeId);
+  if (!origin || !target) return 'Nó inexistente';
+
+  if (origin.kind === 'diamond') {
+    if (!isDecisionSide(from.side)) {
+      return 'A decisão só tem saídas pela direita (sim) e pela esquerda (não)';
+    }
+    const side = from.side;
+    const used = page.edges.some(
+      (edge) => edge.from.nodeId === from.nodeId && edge.from.side === side,
+    );
+    if (used) return `A saída ${side === 'e' ? 'da direita (sim)' : 'da esquerda (não)'} da decisão já está conectada`;
+  }
+
+  if (target.kind === 'diamond') {
+    const incoming = page.edges.filter((edge) => edge.to.nodeId === to.nodeId);
+    if (incoming.length >= 1) return 'A decisão já tem uma entrada';
+  }
+
   const duplicate = page.edges.some(
     (edge) =>
       (sameAnchor(edge.from, from) && sameAnchor(edge.to, to)) ||

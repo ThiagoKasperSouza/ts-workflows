@@ -12,11 +12,34 @@ export interface RunHandle {
 }
 
 export type RunEvent =
-  | {type: 'start'; runId: string; command: string; cwd: string; timeoutMs: number}
+  | {
+      type: 'start';
+      runId: string;
+      command: string;
+      cwd: string;
+      timeoutMs: number;
+      /** `true` quando o processo tem stdin — o `read` do comando fica esperando. */
+      input: boolean;
+      exports: string[];
+    }
   | {type: 'stdout'; data: string}
   | {type: 'stderr'; data: string}
   | {type: 'limit'; reason: string; maxOutputBytes: number}
-  | {type: 'exit'; code: number | null; signal: string | null; durationMs: number; truncated: boolean; timedOut: boolean};
+  | {
+      type: 'exit';
+      code: number | null;
+      signal: string | null;
+      durationMs: number;
+      truncated: boolean;
+      timedOut: boolean;
+      /** Variáveis que o nó pediu para expor, já coletadas pelo executor. */
+      vars: Record<string, string>;
+    };
+
+export interface RunOptions {
+  /** Nomes de variáveis do shell a expor ao fluxo (ex.: `IDADE`). */
+  exports?: readonly string[];
+}
 
 /** Erro de conexão com o executor — quase sempre "o processo não está rodando". */
 export class ExecutorUnavailableError extends Error {
@@ -39,7 +62,9 @@ async function postJson(url: string, body: unknown, signal?: AbortSignal): Promi
     });
   } catch (error) {
     if ((error as Error).name === 'AbortError') throw error;
-    throw new ExecutorUnavailableError((error as Error).message);
+    // Falha de rede aqui quase sempre significa "o executor não está rodando",
+    // e a mensagem crua do browser ("Failed to fetch") não ajuda ninguém.
+    throw new ExecutorUnavailableError(`${(error as Error).message} — ${HINT}`);
   }
 }
 
@@ -51,8 +76,15 @@ export async function streamRun(
   command: string,
   onEvent: (event: RunEvent) => void,
   signal?: AbortSignal,
-): Promise<{code: number | null; signal: string | null; durationMs: number; timedOut: boolean}> {
-  const response = await postJson('/api/run', {command}, signal);
+  options: RunOptions = {},
+): Promise<{
+  code: number | null;
+  signal: string | null;
+  durationMs: number;
+  timedOut: boolean;
+  vars: Record<string, string>;
+}> {
+  const response = await postJson('/api/run', {command, exports: options.exports ?? []}, signal);
 
   if (!response.ok || !response.body) {
     const detail = await response
@@ -62,7 +94,13 @@ export async function streamRun(
     throw new ExecutorUnavailableError(detail ?? `HTTP ${response.status}`);
   }
 
-  let result = {code: null as number | null, signal: null as string | null, durationMs: 0, timedOut: false};
+  let result = {
+    code: null as number | null,
+    signal: null as string | null,
+    durationMs: 0,
+    timedOut: false,
+    vars: {} as Record<string, string>,
+  };
 
   for await (const event of readNdjson(response.body, signal)) {
     onEvent(event as RunEvent);
@@ -73,6 +111,7 @@ export async function streamRun(
         signal: exit.signal,
         durationMs: exit.durationMs,
         timedOut: exit.timedOut,
+        vars: exit.vars ?? {},
       };
     }
   }
@@ -117,4 +156,26 @@ export async function* readNdjson(
 /** Faz o servidor derrubar a execução; o cliente também aborta a leitura. */
 export async function cancelRun(runId: string): Promise<void> {
   await postJson(`/api/runs/${encodeURIComponent(runId)}/cancel`, {}).catch(() => undefined);
+}
+
+/**
+ * Envia o que o usuário digitou para o `read` que está esperando.
+ *
+ * `data` vai crua: quem decide se há `\n` no fim é a janela de terminal (Enter
+ * envia uma linha), não esta camada.
+ */
+export async function sendInput(runId: string, data: string): Promise<string | null> {
+  try {
+    const response = await postJson(`/api/runs/${encodeURIComponent(runId)}/input`, {data});
+    if (!response.ok) {
+      const detail = await response
+        .json()
+        .then((body: {error?: string}) => body.error)
+        .catch(() => undefined);
+      return detail ?? `HTTP ${response.status}`;
+    }
+    return null;
+  } catch (error) {
+    return (error as Error).message;
+  }
 }
