@@ -17,6 +17,10 @@ services:
       context: .
       dockerfile: server/Dockerfile
     container_name: workflow-executor
+    # o executor precisa falar com serviços do host (Ollama na 11434, por
+    # exemplo) — o gateway dá o caminho em vez de adivinhar o IP do host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:5178:5178"
     volumes:
@@ -30,6 +34,9 @@ services:
       - HOST=0.0.0.0
       - DEFAULT_TIMEOUT_MS=30000
       - MAX_OUTPUT_BYTES=262144
+      # modelo e porta do Ollama usado pelos nós de IA
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_MODEL=gemma3:4b
       # evita o git "dirtiness" de um repositório montado, que faz comandos de
       # diff/ci falharem sem motivo
       - GIT_CONFIG_COUNT=1

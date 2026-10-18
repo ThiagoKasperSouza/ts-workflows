@@ -6,7 +6,14 @@ FROM node:24-alpine
 
 # `tini` como PID 1 para que SIGTERM/SIGKILL (timeout, cancelamento, docker
 # stop) cheguem ao processo em vez de o container ignorar e só ser morto no fim.
-RUN apk add --no-cache tini bash coreutils git
+#
+# `docker-cli` fica na imagem porque é barato (~10 MB) e deixa o nó terminal
+# falar com o Docker sem rebuild. **O que não vem por padrão é o acesso**: o
+# socket do host só é montado pelo overlay `docker-compose.docker.yml`, então o
+# executor padrão não consegue chegar no Docker de jeito nenhum.
+# curl e jq são o que os nós de IA usam para falar com a Ollama e extrair o
+# campo que importa da resposta — sem eles o executor não consegue buscar nada.
+RUN apk add --no-cache tini bash coreutils curl jq git docker-cli docker-cli-compose
 
 WORKDIR /app
 

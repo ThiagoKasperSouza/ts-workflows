@@ -545,8 +545,13 @@ body {
   transform: translate(-50%, -50%) scale(1.35);
 }
 
-/* No losango a lateral É o lado do resultado: as portas saem coloridas para
-   não depender de saber qual botão é o da direita. */
+/* No losango cada lateral tem um papel, e a cor diz qual: cima entra, direita
+   é o sim, esquerda é o não, baixo não serve para nada (some). */
+.node[data-kind='diamond'] .port-n {
+  background: #2563eb;
+  box-shadow: 0 0 0 1px #1d4ed8;
+}
+
 .node[data-kind='diamond'] .port-e {
   background: #22c55e;
   box-shadow: 0 0 0 1px #15803d;
@@ -555,6 +560,18 @@ body {
 .node[data-kind='diamond'] .port-w {
   background: #f87171;
   box-shadow: 0 0 0 1px #b91c1c;
+}
+
+.node[data-kind='diamond'] .port-n:hover,
+.node[data-kind='diamond'] .port-n[data-hover],
+.node[data-kind='diamond'] .port-n[data-active] {
+  background: #1d4ed8;
+  scale: 1.35;
+}
+
+/* entrada: fora do papel, some do desenho */
+.node[data-kind='diamond'] .port-s {
+  display: none;
 }
 
 .node[data-kind='diamond'] .port-e:hover,
@@ -569,12 +586,6 @@ body {
 .node[data-kind='diamond'] .port-w[data-active] {
   background: #dc2626;
   scale: 1.35;
-}
-
-/* as portas inativas do losango (n/s) ficam translúcidas: elas não saem saída */
-.node[data-kind='diamond'] .port-n,
-.node[data-kind='diamond'] .port-s {
-  opacity: 0.25;
 }
 
 /* ------------------------------------------------------------------- modo */
@@ -663,6 +674,14 @@ body {
   top: 50%;
   translate: 0 -50%;
   color: #b45309;
+}
+
+.node-hint.is-in {
+  top: 7px;
+  left: 50%;
+  translate: -50% 0;
+  color: #1d4ed8;
+  font-size: 8px;
 }
 
 .node-hint.is-false {
@@ -923,6 +942,55 @@ body {
 
 .is-exposes {
   font-size: 12px;
+}
+
+/* resposta para o comando em execução: caminho de entrada sem popup */
+.is-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.is-answer[hidden] {
+  display: none;
+}
+
+.is-answer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.is-answer-target {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  flex: none;
+}
+
+.is-answer-input {
+  flex: 1;
+  background: #fff;
+}
+
+.is-answer-send {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.is-answer-send:hover {
+  background: #1d4ed8;
 }
 
 @media (max-width: 900px) {

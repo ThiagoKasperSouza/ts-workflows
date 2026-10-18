@@ -111,6 +111,8 @@ export function terminalWindowDocument(title: string, key: string): string {
     background: #020617; color: #e2e8f0; padding: 6px 8px; font: inherit;
   }
   .stdin input:focus { outline: none; border-color: #334155; }
+  .stdin .send { white-space: nowrap; }
+  .stdin[data-waiting='true'] .send { border-color: #7dd3fc; color: #7dd3fc; }
   /* "aguardando entrada": a última saída não terminou em quebra de linha, o
      que é o sinal de que o comando parou para ler (sem PTY não há como saber
      com certeza, então é uma pista visual, não uma garantia). */
@@ -130,7 +132,8 @@ export function terminalWindowDocument(title: string, key: string): string {
   <form class="stdin" id="stdin" data-waiting="false">
     <span class="stdin-caret" aria-hidden="true">&gt;</span>
     <input id="input" autocomplete="off" spellcheck="false"
-      placeholder="resposta para o comando (Enter envia)" />
+      placeholder="resposta para o comando — Enter envia" />
+    <button class="btn send" id="send" type="submit">Enviar</button>
   </form>
 <script>
   const out = document.getElementById('out');
@@ -191,13 +194,25 @@ export function terminalWindowDocument(title: string, key: string): string {
     }
   });
 
-  // Enter envia uma linha; o "\\n" é do protocolo de terminal, não do browser.
-  stdin.addEventListener('submit', (event) => {
-    event.preventDefault();
+  // Enter e o botão Enviar mandam a mesma coisa. A submissão implícita do form
+  // não foi suficiente: sem botão de submit, o Enter não disparava nada e o
+  // campo continuava preenchido — parecia que o terminal ignorava a resposta.
+  function send() {
     const value = input.value;
     input.value = '';
     window.parent.postMessage({kind: 'input', key: KEY, data: value + '\\n'}, '*');
     setWaiting(false);
+    input.focus();
+  }
+
+  stdin.addEventListener('submit', (event) => {
+    event.preventDefault();
+    send();
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    send();
   });
 
   document.getElementById('clear').addEventListener('click', reset);

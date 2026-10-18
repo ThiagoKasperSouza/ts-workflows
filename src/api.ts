@@ -21,6 +21,8 @@ export type RunEvent =
       /** `true` quando o processo tem stdin — o `read` do comando fica esperando. */
       input: boolean;
       exports: string[];
+      /** Variáveis do ambiente injetadas neste comando. */
+      env: string[];
     }
   | {type: 'stdout'; data: string}
   | {type: 'stderr'; data: string}
@@ -39,6 +41,71 @@ export type RunEvent =
 export interface RunOptions {
   /** Nomes de variáveis do shell a expor ao fluxo (ex.: `IDADE`). */
   exports?: readonly string[];
+  /**
+   * Variáveis de passos anteriores, entregues como **ambiente** do shell — o
+   * comando usa `$NOME` normalmente. Não é interpolação de texto: o valor entra
+   * como dado, então nada do que o modelo ou o usuário digitou vira comando.
+   */
+  env?: Readonly<Record<string, string>>;
+}
+
+/** Como a execução terminou, mesmo que o stream tenha morrido no caminho. */
+export interface RunResult {
+  code: number | null;
+  signal: string | null;
+  durationMs: number;
+  timedOut: boolean;
+  vars: Record<string, string>;
+  /** `true` quando o stream quebrou e o resultado veio do executor. */
+  recovered: boolean;
+}
+
+interface RunState {
+  runId: string;
+  status: 'running' | 'finished';
+  command: string;
+  /** Só quando `finished`. */
+  code?: number | null;
+  signal?: string | null;
+  durationMs?: number;
+  timedOut?: boolean;
+  vars?: Record<string, string>;
+  finishedAt?: number;
+}
+
+/**
+ * Consulta o resultado de uma execução que já terminou.
+ *
+ * É o que salva o fluxo quando a conexão morre depois do comando ter rodado: sem
+ * isto, derrubar um container e perder a resposta faria o fluxo reportar falha
+ * sobre algo que deu certo — e, pior, o passo following não aconteceria.
+ */
+async function fetchRunState(runId: string): Promise<RunState | null> {
+  try {
+    const response = await fetch(`/api/runs/${encodeURIComponent(runId)}`);
+    if (!response.ok) return null;
+    return (await response.json()) as RunState;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Aguarda o fim de uma execução consultando o executor.
+ *
+ * Perguntar uma vez só não resolve: quando o stream morre, o comando quase
+ * sempre ainda está rodando. Aqui o cliente insiste até o executor responder que
+ * acabou — ou até o prazo do comando estourar.
+ */
+export async function waitForRunState(runId: string, budgetMs = 120_000): Promise<RunState | null> {
+  const deadline = Date.now() + budgetMs;
+  while (Date.now() < deadline) {
+    const state = await fetchRunState(runId);
+    if (!state) return null; // o executor não conhece: reiniciou
+    if (state.status === 'finished') return state;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  return null;
 }
 
 /** Erro de conexão com o executor — quase sempre "o processo não está rodando". */
@@ -77,14 +144,12 @@ export async function streamRun(
   onEvent: (event: RunEvent) => void,
   signal?: AbortSignal,
   options: RunOptions = {},
-): Promise<{
-  code: number | null;
-  signal: string | null;
-  durationMs: number;
-  timedOut: boolean;
-  vars: Record<string, string>;
-}> {
-  const response = await postJson('/api/run', {command, exports: options.exports ?? []}, signal);
+): Promise<RunResult> {
+  const response = await postJson(
+    '/api/run',
+    {command, exports: options.exports ?? [], env: options.env ?? {}},
+    signal,
+  );
 
   if (!response.ok || !response.body) {
     const detail = await response
@@ -94,31 +159,75 @@ export async function streamRun(
     throw new ExecutorUnavailableError(detail ?? `HTTP ${response.status}`);
   }
 
-  let result = {
-    code: null as number | null,
-    signal: null as string | null,
+  let result: RunResult = {
+    code: null,
+    signal: null,
     durationMs: 0,
     timedOut: false,
-    vars: {} as Record<string, string>,
+    vars: {},
+    recovered: false,
   };
+  let runId = '';
+  let streamBroken = false;
 
-  for await (const event of readNdjson(response.body, signal)) {
-    onEvent(event as RunEvent);
-    if (event.type === 'exit') {
-      const exit = event as Extract<RunEvent, {type: 'exit'}>;
-      result = {
-        code: exit.code,
-        signal: exit.signal,
-        durationMs: exit.durationMs,
-        timedOut: exit.timedOut,
-        vars: exit.vars ?? {},
-      };
+  try {
+    for await (const event of readNdjson(response.body, signal)) {
+      onEvent(event as RunEvent);
+      if (event.type === 'start') runId = String(event.runId ?? '');
+      if (event.type === 'exit') {
+        const exit = event as Extract<RunEvent, {type: 'exit'}>;
+        result = {
+          code: exit.code,
+          signal: exit.signal,
+          durationMs: exit.durationMs,
+          timedOut: exit.timedOut,
+          vars: exit.vars ?? {},
+          recovered: false,
+        };
+      }
     }
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') throw error;
+    // Stream morreu no meio. Antes de desistir, pergunta ao executor: o
+    // comando provavelmente rodou, e sem isso a decisão seguinte receberia uma
+    // falha que não existiu.
+    streamBroken = true;
+    const finished = runId ? await waitForRunState(runId) : null;
+    if (!finished || finished.status !== 'finished') {
+      throw new ExecutorUnavailableError(
+        `a conexão com o executor quebrou no meio da execução (${(error as Error).message}). ` +
+          'Se o executor foi reiniciado no meio do fluxo, este comando precisa ser executado de novo.',
+      );
+    }
+    result = {
+      code: finished.code ?? null,
+      signal: finished.signal ?? null,
+      durationMs: finished.durationMs ?? 0,
+      timedOut: finished.timedOut ?? false,
+      vars: finished.vars ?? {},
+      recovered: true,
+    };
   }
 
   // `reader.cancel()` (abort) encerra o gerador sem lançar: sem esta checagem
   // um cancelamento apareceria como execução bem-sucedida.
   if (signal?.aborted) throw new DOMException('execução cancelada', 'AbortError');
+
+  if (!streamBroken && result.durationMs === 0 && !result.recovered) {
+    // Stream terminou sem evento de saída e sem erro visível: trata como
+    // quebra também, usando a mesma recuperação.
+    const finished = runId ? await waitForRunState(runId) : null;
+    if (finished?.status === 'finished') {
+      result = {
+        code: finished.code ?? null,
+        signal: finished.signal ?? null,
+        durationMs: finished.durationMs ?? 0,
+        timedOut: finished.timedOut ?? false,
+        vars: finished.vars ?? {},
+        recovered: true,
+      };
+    }
+  }
 
   return result;
 }

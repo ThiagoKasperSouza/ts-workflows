@@ -1,0 +1,350 @@
+{
+  "format": "dnd-graph",
+  "version": 1,
+  "exportedAt": "2026-01-01T00:00:00.000Z",
+  "activePageId": "page_docker",
+  "pages": [
+    {
+      "id": "page_docker",
+      "name": "Containers: ciclo de vida",
+      "nodes": [
+        {
+          "id": "start",
+          "kind": "ellipse",
+          "label": "Início",
+          "x": 80,
+          "y": 70,
+          "w": 168,
+          "h": 92
+        },
+        {
+          "id": "preflight",
+          "kind": "terminal",
+          "label": "checar docker",
+          "x": 320,
+          "y": 66,
+          "w": 230,
+          "h": 100,
+          "command": "docker ps >/dev/null 2>&1 || { echo \"Docker não acessível — suba o executor com o overlay docker-compose.docker.yml\"; exit 1; }; echo \"docker acessível\""
+        },
+        {
+          "id": "dec_docker",
+          "kind": "diamond",
+          "label": "docker ok?",
+          "x": 600,
+          "y": 62,
+          "w": 190,
+          "h": 112,
+          "condition": "ok"
+        },
+        {
+          "id": "count",
+          "kind": "terminal",
+          "label": "contar containers",
+          "x": 880,
+          "y": 58,
+          "w": 230,
+          "h": 100,
+          "command": "TOTAL=$(docker ps -q | wc -l); echo \"containers rodando agora: $TOTAL\"",
+          "exposes": [
+            "TOTAL"
+          ]
+        },
+        {
+          "id": "dec_count",
+          "kind": "diamond",
+          "label": "há containers?",
+          "x": 1160,
+          "y": 54,
+          "w": 190,
+          "h": 112,
+          "condition": "TOTAL > 0"
+        },
+        {
+          "id": "up",
+          "kind": "terminal",
+          "label": "subir wf-demo",
+          "x": 1440,
+          "y": 50,
+          "w": 230,
+          "h": 100,
+          "command": "docker rm -f wf-demo >/dev/null 2>&1; docker run -d --rm --name wf-demo postgres:16-alpine sh -c \"echo demo no ar; sleep 600\""
+        },
+        {
+          "id": "dec_up",
+          "kind": "diamond",
+          "label": "subiu?",
+          "x": 1720,
+          "y": 46,
+          "w": 190,
+          "h": 112,
+          "condition": "ok"
+        },
+        {
+          "id": "ready",
+          "kind": "terminal",
+          "label": "esperar ficar pronto",
+          "x": 2000,
+          "y": 42,
+          "w": 230,
+          "h": 100,
+          "command": "for i in $(seq 1 10); do [ \"$(docker inspect -f '{{.State.Running}}' wf-demo 2>/dev/null)\" = true ] && { echo \"pronto em ${i}s\"; exit 0; }; sleep 1; done; echo \"não ficou pronto em 10s\"; exit 1"
+        },
+        {
+          "id": "dec_ready",
+          "kind": "diamond",
+          "label": "pronto?",
+          "x": 2280,
+          "y": 38,
+          "w": 190,
+          "h": 112,
+          "condition": "ok"
+        },
+        {
+          "id": "talk",
+          "kind": "terminal",
+          "label": "falar com o container",
+          "x": 2560,
+          "y": 34,
+          "w": 230,
+          "h": 100,
+          "command": "docker exec wf-demo echo \"o fluxo do diagrama está falando com este container\""
+        },
+        {
+          "id": "down",
+          "kind": "terminal",
+          "label": "derrubar",
+          "x": 2840,
+          "y": 30,
+          "w": 230,
+          "h": 100,
+          "command": "docker stop wf-demo >/dev/null && echo \"container derrubado (o --rm já removeu)\""
+        },
+        {
+          "id": "end_ok",
+          "kind": "ellipse",
+          "label": "Fim (ok)",
+          "x": 3140,
+          "y": 26,
+          "w": 168,
+          "h": 92
+        },
+        {
+          "id": "warn",
+          "kind": "terminal",
+          "label": "sem docker",
+          "x": 320,
+          "y": 260,
+          "w": 230,
+          "h": 100,
+          "command": "echo \"Docker fora do executor: suba com o overlay\"; echo \"docker compose -f docker-compose.yml -f docker-compose.docker.yml up -d executor\""
+        },
+        {
+          "id": "end_no",
+          "kind": "ellipse",
+          "label": "Fim",
+          "x": 620,
+          "y": 256,
+          "w": 168,
+          "h": 92
+        },
+        {
+          "id": "warn_empty",
+          "kind": "terminal",
+          "label": "host sem containers",
+          "x": 1160,
+          "y": 260,
+          "w": 230,
+          "h": 100,
+          "command": "echo \"nenhum container rodando no host — o fluxo não tem o que testar aqui\""
+        },
+        {
+          "id": "diag",
+          "kind": "terminal",
+          "label": "diagnóstico",
+          "x": 1720,
+          "y": 260,
+          "w": 230,
+          "h": 100,
+          "command": "docker logs --tail 20 wf-demo 2>&1 || echo \"o container nem subiu\""
+        },
+        {
+          "id": "timeout_end",
+          "kind": "ellipse",
+          "label": "Fim (não ficou pronto)",
+          "x": 2280,
+          "y": 256,
+          "w": 190,
+          "h": 92
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "from": {
+            "nodeId": "start",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "preflight",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e2",
+          "from": {
+            "nodeId": "preflight",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "dec_docker",
+            "side": "n"
+          }
+        },
+        {
+          "id": "e3",
+          "from": {
+            "nodeId": "dec_docker",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "count",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e4",
+          "from": {
+            "nodeId": "dec_docker",
+            "side": "w"
+          },
+          "to": {
+            "nodeId": "warn",
+            "side": "e"
+          }
+        },
+        {
+          "id": "e5",
+          "from": {
+            "nodeId": "count",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "dec_count",
+            "side": "n"
+          }
+        },
+        {
+          "id": "e6",
+          "from": {
+            "nodeId": "dec_count",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "up",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e7",
+          "from": {
+            "nodeId": "dec_count",
+            "side": "w"
+          },
+          "to": {
+            "nodeId": "warn_empty",
+            "side": "e"
+          }
+        },
+        {
+          "id": "e8",
+          "from": {
+            "nodeId": "up",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "dec_up",
+            "side": "n"
+          }
+        },
+        {
+          "id": "e9",
+          "from": {
+            "nodeId": "dec_up",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "ready",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e10",
+          "from": {
+            "nodeId": "dec_up",
+            "side": "w"
+          },
+          "to": {
+            "nodeId": "diag",
+            "side": "e"
+          }
+        },
+        {
+          "id": "e11",
+          "from": {
+            "nodeId": "ready",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "dec_ready",
+            "side": "n"
+          }
+        },
+        {
+          "id": "e12",
+          "from": {
+            "nodeId": "dec_ready",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "talk",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e13",
+          "from": {
+            "nodeId": "dec_ready",
+            "side": "w"
+          },
+          "to": {
+            "nodeId": "timeout_end",
+            "side": "e"
+          }
+        },
+        {
+          "id": "e14",
+          "from": {
+            "nodeId": "talk",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "down",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e15",
+          "from": {
+            "nodeId": "down",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "end_ok",
+            "side": "w"
+          }
+        }
+      ]
+    }
+  ]
+}

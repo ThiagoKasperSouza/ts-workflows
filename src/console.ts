@@ -30,6 +30,10 @@ export class NodeInspector {
   private readonly cancelBtn: HTMLButtonElement;
   private readonly outputWrap: HTMLElement;
   private readonly outputEl: HTMLElement;
+  private readonly answerForm: HTMLFormElement;
+  private readonly answerInput: HTMLInputElement;
+  private readonly answerTarget: HTMLElement;
+  private readonly fieldsEl: HTMLElement;
 
   private currentId: string | null = null;
   /** No modo de execução o painel só informa: nada de editar comando aqui. */
@@ -67,9 +71,18 @@ export class NodeInspector {
           <label class="is-label" for="node-inspector-exposes">Variáveis expostas</label>
           <input id="node-inspector-exposes" class="is-input is-exposes" spellcheck="false"
             placeholder="ex.: IDADE" />
-          <p class="is-help">Viram <code>NOME</code> na condição da decisão</p>
+          <p class="is-help">Viram <code>NOME</code> na condição e em <code>$NOME</code> nos próximos comandos</p>
         </div>
       </div>
+      <form class="is-answer" data-answer hidden>
+        <label class="is-label" for="node-inspector-answer">Resposta para o comando em execução</label>
+        <div class="is-answer-row">
+          <span class="is-answer-target" data-answer-target></span>
+          <input id="node-inspector-answer" class="is-input is-answer-input" autocomplete="off"
+            spellcheck="false" placeholder="digite e aperte Enter" />
+          <button type="submit" class="is-answer-send">Enviar</button>
+        </div>
+      </form>
       <details class="is-output-wrap" data-output-wrap hidden>
         <summary>Saída do terminal<span class="is-output-hint"> (a janela aberta mostra o log completo)</span></summary>
         <pre class="is-output" data-output></pre>
@@ -82,11 +95,34 @@ export class NodeInspector {
     this.exposesEl = root.querySelector<HTMLInputElement>('#node-inspector-exposes')!;
     this.runBtn = root.querySelector<HTMLButtonElement>('[data-run]')!;
     this.cancelBtn = root.querySelector<HTMLButtonElement>('[data-cancel]')!;
+    this.fieldsEl = root.querySelector<HTMLElement>('.is-fields')!;
+    this.answerForm = root.querySelector<HTMLFormElement>('[data-answer]')!;
+    this.answerInput = root.querySelector<HTMLInputElement>('#node-inspector-answer')!;
+    this.answerTarget = root.querySelector<HTMLElement>('[data-answer-target]')!;
     this.outputWrap = root.querySelector<HTMLElement>('[data-output-wrap]')!;
     this.outputEl = root.querySelector<HTMLElement>('[data-output]')!;
 
     this.runBtn.addEventListener('click', () => void this.run());
     this.cancelBtn.addEventListener('click', () => void this.deps.engine.cancel());
+    // Caminho de entrada sem popup: responder aqui funciona mesmo com a janela
+    // bloqueada, e é o mesmo `answer` que a janela usa.
+    const send = () => {
+      const value = this.answerInput.value;
+      this.answerInput.value = '';
+      void this.deps.engine.answer(value);
+    };
+    this.answerForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      send();
+    });
+    // Enter é tratado aqui, e não pela submissão implícita do form: nos testes
+    // ela simplesmente não acontecia, e o campo ficava preenchido como se o
+    // comando tivesse ignorado a resposta.
+    this.answerInput.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      send();
+    });
     root.querySelector<HTMLButtonElement>('[data-window]')!.addEventListener('click', () => {
       const node = this.currentNode();
       // Precisa ser síncrono: abrir depois de um await vira popup bloqueado.
@@ -133,28 +169,40 @@ export class NodeInspector {
     this.paintState();
   }
 
-  /** Espelha a seleção: o painel só existe para nós terminal. */
+  /**
+   * Espelha a seleção. O painel existe para nós terminal — mas, se um comando
+   * estiver rodando e esperando resposta, ele também aparece (com o nó em
+   * execução no lugar de um terminal selecionado), porque é a única forma de
+   * responder quando a janela separada está bloqueada.
+   */
   sync(node: Node | null): void {
-    if (node?.kind !== 'terminal') {
+    const running = this.deps.engine.runningNode();
+    const terminal = node?.kind === 'terminal' ? node : null;
+    if (!terminal && !running) {
       this.root.hidden = true;
       this.currentId = null;
       return;
     }
 
     this.root.hidden = false;
-    this.currentId = node.id;
-    this.titleEl.textContent = node.label;
+    const shown = terminal ?? running!;
+    this.currentId = shown.id;
+    this.titleEl.textContent = shown.label;
 
-    if (document.activeElement !== this.inputEl) {
-      const command = node.command ?? '';
+    this.root.dataset.kind = shown.kind;
+    this.fieldsEl.hidden = shown.kind !== 'terminal';
+    this.answerForm.hidden = running === null;
+
+    if (terminal && document.activeElement !== this.inputEl) {
+      const command = terminal.command ?? '';
       if (this.inputEl.value !== command) {
         this.inputEl.value = command;
         this.typedSinceFocus = false;
       }
-    }
-    if (document.activeElement !== this.exposesEl) {
-      const exposes = (node.exposes ?? []).join(', ');
-      if (this.exposesEl.value !== exposes) this.exposesEl.value = exposes;
+      if (document.activeElement !== this.exposesEl) {
+        const exposes = (terminal.exposes ?? []).join(', ');
+        if (this.exposesEl.value !== exposes) this.exposesEl.value = exposes;
+      }
     }
 
     this.paintState();
@@ -172,10 +220,15 @@ export class NodeInspector {
     const step = lastStepOf(engine, this.currentId);
     this.detailEl.textContent = step ? step.detail : '';
 
-    const running = state === 'running';
+    // quem está esperando resposta (pode ser outro nó, não o selecionado)
+    const waiting = engine.runningNode();
+    this.answerForm.hidden = waiting === null || this.root.hidden;
+    this.answerTarget.textContent = waiting ? `${waiting.label} espera:` : '';
+
+    const busy = state === 'running';
     this.runBtn.hidden = !this.editable;
-    this.runBtn.disabled = running || engine.isRunning();
-    this.cancelBtn.hidden = !running;
+    this.runBtn.disabled = busy || engine.isRunning();
+    this.cancelBtn.hidden = !busy;
 
     this.paintOutput();
   }

@@ -145,6 +145,12 @@ export function connectionError(page: Page, from: Anchor, to: Anchor): string | 
   }
 
   if (target.kind === 'diamond') {
+    // A entrada do losango é só pela lateral de cima: as laterais da esquerda e da direita já têm
+    // significado fixo (direita = sim, esquerda = não) e aceitar entrada nelas
+    // deixaria o desenho ambíguo — o mesmo furo serve para entrar e para sair.
+    if (to.side !== 'n') {
+      return 'A entrada da decisão entra só pela conexão de cima';
+    }
     const incoming = page.edges.filter((edge) => edge.to.nodeId === to.nodeId);
     if (incoming.length >= 1) return 'A decisão já tem uma entrada';
   }

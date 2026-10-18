@@ -1,8 +1,7 @@
 {
   "format": "dnd-graph",
   "version": 1,
-  "exportedAt": "2026-01-01T00:00:00.000Z",
-  "activePageId": "page_input",
+  "exportedAt": "2026-10-18T13:34:15.600Z",
   "pages": [
     {
       "id": "page_input",
@@ -26,14 +25,16 @@
           "w": 220,
           "h": 100,
           "command": "echo \"Digite sua idade:\"; read IDADE; echo \"idade=$IDADE\"",
-          "exposes": ["IDADE"]
+          "exposes": [
+            "IDADE"
+          ]
         },
         {
           "id": "dec",
           "kind": "diamond",
           "label": "maior de 18?",
-          "x": 660,
-          "y": 238,
+          "x": 666,
+          "y": 279,
           "w": 184,
           "h": 112,
           "condition": "IDADE > 18"
@@ -42,8 +43,8 @@
           "id": "adult",
           "kind": "ellipse",
           "label": "adulto",
-          "x": 1000,
-          "y": 120,
+          "x": 1001,
+          "y": 283,
           "w": 180,
           "h": 92
         },
@@ -51,18 +52,59 @@
           "id": "minor",
           "kind": "ellipse",
           "label": "menor de 18",
-          "x": 1000,
-          "y": 380,
+          "x": 381,
+          "y": 434,
           "w": 180,
           "h": 92
         }
       ],
       "edges": [
-        { "id": "e1", "from": { "nodeId": "start", "side": "e" }, "to": { "nodeId": "ask", "side": "w" } },
-        { "id": "e2", "from": { "nodeId": "ask", "side": "e" }, "to": { "nodeId": "dec", "side": "w" } },
-        { "id": "e_yes", "from": { "nodeId": "dec", "side": "e" }, "to": { "nodeId": "adult", "side": "w" } },
-        { "id": "e_no", "from": { "nodeId": "dec", "side": "w" }, "to": { "nodeId": "minor", "side": "e" } }
+        {
+          "id": "e1",
+          "from": {
+            "nodeId": "start",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "ask",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e_yes",
+          "from": {
+            "nodeId": "dec",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "adult",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e_no",
+          "from": {
+            "nodeId": "dec",
+            "side": "w"
+          },
+          "to": {
+            "nodeId": "minor",
+            "side": "e"
+          }
+        },
+        {
+          "id": "edge_mvdv2h40_2",
+          "from": {
+            "nodeId": "ask",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "dec",
+            "side": "n"
+          }
+        }
       ]
     }
-  ]
+  ],
+  "activePageId": "page_input"
 }

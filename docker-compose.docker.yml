@@ -1,0 +1,34 @@
+# Overlay: dá ao executor acesso ao Docker do host (docker-outside-of-docker).
+#
+# POR QUE É OPT-IN
+#   Montar /var/run/docker.sock dá ao executor **root na máquina**: um comando
+#   como `docker run -v /:/host` escrito em qualquer nó do fluxograma já é
+#   suficiente para assumir o host inteiro. Por isso o executor padrão NÃO tem
+#   socket — com este arquivo você liga, sem ele você desliga. Nada no código
+#   precisa mudar.
+#
+# COMO LIGAR
+#   docker compose -f docker-compose.yml -f docker-compose.docker.yml up -d executor
+#
+# COMO DESLIGAR
+#   docker compose -f docker-compose.yml -f docker-compose.docker.yml down
+#   docker compose up -d executor        # volta ao executor isolado
+#
+# Se algum dia os fluxos deixarem de ser só seus, troque o socket cru por um
+# proxy que restringe a API do Docker (ex.: tecnativa/docker-socket-proxy): é o
+# mesmo mecanismo, com menos poder por baixo.
+#
+# PEGADINHA DO COMPOSE
+#   De dentro do container o diretório de trabalho é `/workspace`, então
+#   `docker compose ps` adivinha o nome do projeto como "workspace" e não acha
+#   nada (no host ele é "wf", derivado do nome da pasta). Use:
+#       docker compose -p wf ps
+#   ou `docker ps`, que não depende de projeto nenhum.
+services:
+  executor:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      # flag explícita: o executor avisa no log quando percebe o Docker
+      - ALLOW_DOCKER=1

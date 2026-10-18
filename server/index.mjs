@@ -13,6 +13,7 @@
  */
 
 import {spawn} from 'node:child_process';
+import {existsSync} from 'node:fs';
 import {createServer} from 'node:http';
 import path from 'node:path';
 import process from 'node:process';
@@ -28,10 +29,44 @@ const MAX_OUTPUT_BYTES = Number(process.env.MAX_OUTPUT_BYTES ?? 262_144);
 const DEFAULT_TIMEOUT_MS = Number(process.env.DEFAULT_TIMEOUT_MS ?? 30_000);
 const MAX_TIMEOUT_MS = Number(process.env.MAX_TIMEOUT_MS ?? 600_000);
 const MAX_INPUT_BYTES = Number(process.env.MAX_INPUT_BYTES ?? 64 * 1024);
+const MAX_ENV_VARS = 32;
+const MAX_ENV_VALUE = 64 * 1024;
 const MAX_BODY_BYTES = 64 * 1024;
+
+/**
+ * Acesso ao Docker: o socket do host só chega aqui se o compose montar
+ * (`docker-compose.docker.yml`) e `ALLOW_DOCKER=1` estiver setado. Sem os dois,
+ * `docker` no terminal falha com "cannot connect to the Docker daemon" — que é
+ * exatamente o comportamento desejado: porta fechada por padrão.
+ */
+const DOCKER_SOCKET = process.env.DOCKER_HOST?.startsWith('unix://')
+  ? process.env.DOCKER_HOST.slice('unix://'.length)
+  : '/var/run/docker.sock';
+const DOCKER_ENABLED = process.env.ALLOW_DOCKER === '1';
+const hasDocker = () => DOCKER_ENABLED && existsSync(DOCKER_SOCKET);
 
 /** Execuções vivas, para permitir cancelamento. */
 const running = new Map();
+
+/**
+ * Últimas execuções **terminadas**, com o resultado final.
+ *
+ * Existe para o caso em que o stream NDJSON morre no meio (proxy, executor
+ * reiniciado, aba suspensa): o comando já pode ter sido executado — um
+ * container derrubado, um arquivo apagado — e sem isto o fluxo falharia sem
+ * saber o que aconteceu. Com o registro, o cliente recupera o exit code.
+ */
+const FINISHED = new Map();
+const FINISHED_LIMIT = 50;
+
+const remember = (record) => {
+  FINISHED.set(record.runId, record);
+  while (FINISHED.size > FINISHED_LIMIT) {
+    const oldest = FINISHED.keys().next().value;
+    FINISHED.delete(oldest);
+  }
+};
+
 let runSeq = 0;
 
 const nextRunId = () => `run_${Date.now().toString(36)}_${(runSeq += 1).toString(36)}`;
@@ -193,6 +228,17 @@ async function handleRun(req, res) {
   }
 
   const timeoutMs = clampTimeout(payload.timeoutMs);
+  // Variáveis exportadas por passos anteriores chegam pelo ambiente do shell,
+  // e não interpoladas no texto do comando: o valor entra como dado, nunca como
+  // código, então não há injeção de shell possível.
+  const extraEnv = {};
+  if (payload.env && typeof payload.env === 'object' && !Array.isArray(payload.env)) {
+    for (const [key, value] of Object.entries(payload.env).slice(0, MAX_ENV_VARS)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof value !== 'string') continue;
+      extraEnv[key] = value.slice(0, MAX_ENV_VALUE);
+    }
+  }
+
   const exports = Array.isArray(payload.exports)
     ? payload.exports.filter((name) => typeof name === 'string').slice(0, 16)
     : [];
@@ -211,7 +257,16 @@ async function handleRun(req, res) {
   };
 
   const startedAt = Date.now();
-  emit({type: 'start', runId, command, cwd, timeoutMs, input: true, exports});
+  emit({
+    type: 'start',
+    runId,
+    command,
+    cwd,
+    timeoutMs,
+    input: true,
+    exports,
+    env: Object.keys(extraEnv),
+  });
 
   // `shell: true` faz o comando rodar dentro de um `sh -c`: sinalizar o shell
   // NÃO mata o processo real (o `sleep 30` continua, segurando o pipe). Com
@@ -221,7 +276,7 @@ async function handleRun(req, res) {
     shell: true,
     detached: useGroup,
     cwd,
-    env: {...process.env, TERM: 'dumb', NO_COLOR: '1', FORCE_COLOR: '0'},
+    env: {...process.env, ...extraEnv, TERM: 'dumb', NO_COLOR: '1', FORCE_COLOR: '0'},
     // stdin vira pipe (para `read` esperar o usuário) e o fd 3 leva o dump de
     // variáveis, separado do stdout do usuário.
     stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
@@ -242,6 +297,8 @@ async function handleRun(req, res) {
   const state = {
     child,
     signalTree,
+    command,
+    startedAt,
     bytes: 0,
     truncated: false,
     limited: false,
@@ -339,16 +396,19 @@ async function handleRun(req, res) {
     child.stdin.end();
     varReader.flush();
     running.delete(runId);
-    emit({
-      type: 'exit',
+    const result = {
       runId,
+      command,
       code,
       signal,
       durationMs: Date.now() - startedAt,
       truncated: state.truncated,
       timedOut: state.timedOut,
       vars: state.vars,
-    });
+      finishedAt: Date.now(),
+    };
+    remember(result);
+    emit({type: 'exit', ...result});
     res.end();
   };
 
@@ -422,6 +482,7 @@ const server = createServer((req, res) => {
       maxOutputBytes: MAX_OUTPUT_BYTES,
       defaultTimeoutMs: DEFAULT_TIMEOUT_MS,
       running: running.size,
+      docker: hasDocker(),
     });
     return;
   }
@@ -440,6 +501,27 @@ const server = createServer((req, res) => {
     return;
   }
 
+  // Estado de uma execução: em andamento ou já terminada. É o que permite
+  // recuperar depois de o stream morrer — o cliente fica perguntando até o
+  // comando acabar, em vez de desistir no meio.
+  const status = path.match(/^\/api\/runs\/([\w-]+)$/);
+  if (req.method === 'GET' && status) {
+    const alive = running.get(status[1]);
+    if (alive) {
+      sendJson(res, 200, {
+        runId: status[1],
+        status: 'running',
+        command: alive.command,
+        startedAt: alive.startedAt,
+      });
+      return;
+    }
+    const record = FINISHED.get(status[1]);
+    if (record) sendJson(res, 200, {status: 'finished', ...record});
+    else sendJson(res, 404, {error: 'Execução desconhecida'});
+    return;
+  }
+
   const input = path.match(/^\/api\/runs\/([\w-]+)\/input$/);
   if (req.method === 'POST' && input) {
     handleInput(req, res, input[1]).catch((error) => {
@@ -455,6 +537,18 @@ const server = createServer((req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`executor de workflows em http://${HOST}:${PORT}`);
   console.log(`workspace: ${ROOT}`);
+  if (hasDocker()) {
+    console.warn(
+      [
+        '',
+        '  ⚠  DOCKER HABILITADO: este executor tem acesso ao Docker do host.',
+        '     Comandos de qualquer nó do fluxograma podem assumir a máquina',
+        '     (ex.: docker run -v /:/host). Rode apenas fluxos em que confia.',
+        '     Para desligar: suba sem o overlay docker-compose.docker.yml.',
+        '',
+      ].join('\n'),
+    );
+  }
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

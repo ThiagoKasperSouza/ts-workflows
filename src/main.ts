@@ -395,7 +395,7 @@ function applyMode(): void {
   app.querySelector<HTMLElement>('[data-mode-label]')!.textContent = MODE_LABEL[mode.mode];
   app.querySelector<HTMLElement>('[data-hint]')!.innerHTML =
     mode.mode === 'edit'
-      ? 'Arraste da paleta para criar · <strong>duplo clique</strong> renomeia · ligação: arraste entre as bolinhas · losango: <strong>direita = sim</strong>, <strong>esquerda = não</strong> · comando e condição se editam na barra lateral · <strong>E</strong> vai para execução'
+      ? 'Arraste da paleta para criar · <strong>duplo clique</strong> renomeia · ligação: arraste entre as bolinhas · losango: <strong>entrada por cima</strong>, <strong>direita = sim</strong>, <strong>esquerda = não</strong> · comando e condição se editam na barra lateral · <strong>E</strong> vai para execução'
       : 'Clique no nó <strong>início</strong> para executar o fluxo · <strong>E</strong> volta para edição';
   inspector.setInteractive(mode.isEdit);
 }

@@ -59,11 +59,12 @@ class PortView {
     readonly side: Side,
     parent: HTMLElement,
     /**
-     * `true` quando esta porta não pode iniciar uma ligação — no losango, as
-     * laterais de cima e de baixo são só de entrada, porque as duas saídas
-     * (direita = sim, esquerda = não) têm lado reservado.
+     * No losango cada lateral tem um papel fixo: **n** recebe a entrada, **e**
+     * é o "sim" e **w** é o "não". Quem não pode iniciar ligação é bloqueado
+     * como `Draggable`; quem não pode receber, como `Droppable`.
      */
-    readonly sourceOnlyBlocked = false,
+    readonly sourceBlocked = false,
+    readonly targetBlocked = false,
   ) {
     this.el = el('button', `port port-${side}`);
     this.el.type = 'button';
@@ -81,7 +82,7 @@ class PortView {
         type: CONNECTOR_DRAG_TYPE,
         data: {nodeId, side},
         sensors: [ConnectorSensor],
-        disabled: sourceOnlyBlocked,
+        disabled: sourceBlocked,
         plugins: [
           // 'none' NÃO pode ser usado aqui: o plugin Feedback sai cedo nesse
           // caso e nunca publica `dragOperation.shape`, e `computeCollisions`
@@ -99,6 +100,7 @@ class PortView {
         // o `data` precisa existir também no droppable: é dele que o
         // `dragend` lê qual nó/lado é o destino da ligação
         data: {nodeId, side},
+        disabled: targetBlocked,
         // a própria porta de origem acompanha o cursor durante o arrasto e por
         // isso colidiria com ela mesma (distância ~0 ⇒ maior valor). Rejeitar
         // qualquer arrasto originado no mesmo nó elimina essa ambiguidade e
@@ -119,8 +121,8 @@ class PortView {
 
   /** Modo de execução: sem arrasto de porta, ninguém liga nada por acidente. */
   setInteractive(on: boolean): void {
-    this.draggable.disabled = !on || this.sourceOnlyBlocked;
-    this.droppable.disabled = !on;
+    this.draggable.disabled = !on || this.sourceBlocked;
+    this.droppable.disabled = !on || this.targetBlocked;
   }
 }
 
@@ -151,9 +153,17 @@ export class NodeView {
     this.el.appendChild(this.bodyEl);
 
     for (const side of SIDES) {
-      // no losango, n/s são entradas; e/w são as duas saídas (sim/não)
-      const blocked = node.kind === 'diamond' && (side === 'n' || side === 's');
-      this.ports.set(side, new PortView(manager, node.id, side, this.el, blocked));
+      // Losango: n recebe (não emite), e/w emitem (não recebem), s não serve
+      // para nada — uma lateral fora do papel é o que torna o desenho ambíguo.
+      //
+      // e/w continuam *soltáveis* de propósito: recusar a queda faria o arrasto
+      // terminar em silêncio, e o usuário não aprenderia que a entrada é só pelo
+      // topo. Ao soltar, o `connectionError` explica. A lateral s nem aparece —
+      // não há o que explicar de uma porta invisível.
+      const decision = node.kind === 'diamond';
+      const sourceBlocked = decision && side !== 'e' && side !== 'w';
+      const targetBlocked = decision && side === 's';
+      this.ports.set(side, new PortView(manager, node.id, side, this.el, sourceBlocked, targetBlocked));
     }
 
     this.el.addEventListener('pointerdown', (event) => {
@@ -245,6 +255,7 @@ export class NodeView {
     if (!hints) {
       const box = el('span', 'node-hints');
       box.append(
+        Object.assign(el('span', 'node-hint is-in'), {textContent: 'entrada'}),
         Object.assign(el('span', 'node-hint is-false'), {textContent: 'não'}),
         Object.assign(el('span', 'node-hint is-true'), {textContent: 'sim'}),
       );

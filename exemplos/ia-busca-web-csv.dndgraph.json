@@ -1,0 +1,309 @@
+{
+  "format": "dnd-graph",
+  "version": 1,
+  "exportedAt": "2026-01-01T00:00:00.000Z",
+  "activePageId": "page_ia",
+  "pages": [
+    {
+      "id": "page_ia",
+      "name": "IA: busca na web → CSV",
+      "nodes": [
+        {
+          "id": "start",
+          "kind": "ellipse",
+          "label": "Início",
+          "x": 60,
+          "y": 60,
+          "w": 168,
+          "h": 92
+        },
+        {
+          "id": "buscar",
+          "kind": "terminal",
+          "label": "buscar na web",
+          "x": 280,
+          "y": 52,
+          "w": 250,
+          "h": 108,
+          "command": "QUERY=\"fluxo de trabalho em workflow\"; curl -s --max-time 20 -A \"Mozilla/5.0\" \"https://pt.wikipedia.org/w/api.php?action=query&list=search&srsearch=$(printf %s \"$QUERY\" | jq -sRr @uri)&format=json&srlimit=5\" -o /tmp/busca.json; RESULTADOS=$(jq '[.query.search[]?] | length' /tmp/busca.json); BUSCA=$(jq -r '[.query.search[]? | \"- \\(.title): \\(.snippet | gsub(\"<[^>]+>\"; \"\"))\"] | join(\"\\n\")' /tmp/busca.json); echo \"$RESULTADOS resultado(s) para: $QUERY\"; echo \"$BUSCA\"",
+          "exposes": [
+            "RESULTADOS",
+            "BUSCA",
+            "QUERY"
+          ]
+        },
+        {
+          "id": "dec_busca",
+          "kind": "diamond",
+          "label": "achou algo?",
+          "x": 650,
+          "y": 50,
+          "w": 190,
+          "h": 112,
+          "condition": "RESULTADOS > 0"
+        },
+        {
+          "id": "delegar",
+          "kind": "terminal",
+          "label": "gemma3 extrai CSV",
+          "x": 980,
+          "y": 40,
+          "w": 250,
+          "h": 120,
+          "command": "MODELO=${OLLAMA_MODEL:-gemma3:4b}; PROMPT=\"Transforme a busca abaixo em CSV. Responda APENAS com o CSV, sem cerca de codigo, comecando pelo cabecalho resultado,resumo. Busca: $BUSCA\"; jq -n --arg m \"$MODELO\" --arg p \"$PROMPT\" '{model:$m, prompt:$p, stream:false, options:{num_predict:700, temperature:0.2}}' | curl -s --max-time 300 \"$OLLAMA_HOST/api/generate\" -d @- | jq -r '.response // \"\"' > /tmp/bruto.txt; CSV=$(sed -e '/^```/d' -e 's/^```//' -e 's/```$//' /tmp/bruto.txt | sed '/^[[:space:]]*$/d'); TAMANHO=${#CSV}; echo \"resposta do modelo: ${TAMANHO} caracteres\"; printf '%s\\n' \"$CSV\" | head -5",
+          "exposes": [
+            "CSV",
+            "TAMANHO"
+          ]
+        },
+        {
+          "id": "dec_resposta",
+          "kind": "diamond",
+          "label": "modelo respondeu?",
+          "x": 1350,
+          "y": 44,
+          "w": 200,
+          "h": 112,
+          "condition": "TAMANHO > 20"
+        },
+        {
+          "id": "salvar",
+          "kind": "terminal",
+          "label": "salvar saida",
+          "x": 1700,
+          "y": 36,
+          "w": 250,
+          "h": 116,
+          "command": "mkdir -p saida; printf '%s\\n' \"$CSV\" > saida/resultado.csv; { echo \"# Resultado da busca\"; echo; echo \"- Consulta: $QUERY\"; echo \"- Resultados na busca: $RESULTADOS\"; echo \"- Gerado por: ${OLLAMA_MODEL:-gemma3:4b} em $(date '+%Y-%m-%d %H:%M')\"; echo; echo '| resultado | resumo |'; echo '| --- | --- |'; tail -n +2 saida/resultado.csv | awk -F',' 'NF>1 {printf \"| %s | %s |\\n\", substr($0, 1, index($0, \",\")-1), substr($0, index($0, \",\")+1)}'; } > saida/resultado.md; LINHAS=$(wc -l < saida/resultado.csv | tr -d ' '); echo \"saida/resultado.csv: $LINHAS linha(s)\"; echo \"saida/resultado.md criado\"",
+          "exposes": [
+            "LINHAS"
+          ]
+        },
+        {
+          "id": "dec_arquivo",
+          "kind": "diamond",
+          "label": "arquivo tem dados?",
+          "x": 2070,
+          "y": 40,
+          "w": 210,
+          "h": 112,
+          "condition": "LINHAS > 1"
+        },
+        {
+          "id": "conferir",
+          "kind": "terminal",
+          "label": "conferir resultado",
+          "x": 2410,
+          "y": 44,
+          "w": 250,
+          "h": 104,
+          "command": "echo '--- resultado.csv ---'; cat saida/resultado.csv"
+        },
+        {
+          "id": "end_ok",
+          "kind": "ellipse",
+          "label": "Fim (ok)",
+          "x": 2790,
+          "y": 40,
+          "w": 168,
+          "h": 92
+        },
+        {
+          "id": "sem_resultado",
+          "kind": "terminal",
+          "label": "busca vazia",
+          "x": 650,
+          "y": 250,
+          "w": 250,
+          "h": 100,
+          "command": "echo \"nenhum resultado para: $QUERY\"; mkdir -p saida; echo '# sem resultados' > saida/resultado.md; exit 0"
+        },
+        {
+          "id": "modelo_falhou",
+          "kind": "terminal",
+          "label": "modelo devolveu vazio",
+          "x": 1350,
+          "y": 250,
+          "w": 250,
+          "h": 100,
+          "command": "echo \"--- resposta bruta do modelo ---\"; head -c 400 /tmp/bruto.txt; echo; echo \"(aollama responde em $OLLAMA_HOST; modelo: ${OLLAMA_MODEL:-gemma3:4b})\"; exit 0"
+        },
+        {
+          "id": "arquivo_vazio",
+          "kind": "terminal",
+          "label": "arquivo vazio",
+          "x": 2070,
+          "y": 250,
+          "w": 250,
+          "h": 100,
+          "command": "echo \"o csv saiu sem linhas — veja /tmp/bruto.txt\"; head -c 400 /tmp/bruto.txt; exit 0"
+        },
+        {
+          "id": "end_no",
+          "kind": "ellipse",
+          "label": "Fim (sem csv)",
+          "x": 2410,
+          "y": 252,
+          "w": 190,
+          "h": 92
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "from": {
+            "nodeId": "start",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "buscar",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e2",
+          "from": {
+            "nodeId": "buscar",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "dec_busca",
+            "side": "n"
+          }
+        },
+        {
+          "id": "e3",
+          "from": {
+            "nodeId": "dec_busca",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "delegar",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e4",
+          "from": {
+            "nodeId": "dec_busca",
+            "side": "w"
+          },
+          "to": {
+            "nodeId": "sem_resultado",
+            "side": "e"
+          }
+        },
+        {
+          "id": "e5",
+          "from": {
+            "nodeId": "delegar",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "dec_resposta",
+            "side": "n"
+          }
+        },
+        {
+          "id": "e6",
+          "from": {
+            "nodeId": "dec_resposta",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "salvar",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e7",
+          "from": {
+            "nodeId": "dec_resposta",
+            "side": "w"
+          },
+          "to": {
+            "nodeId": "modelo_falhou",
+            "side": "e"
+          }
+        },
+        {
+          "id": "e8",
+          "from": {
+            "nodeId": "salvar",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "dec_arquivo",
+            "side": "n"
+          }
+        },
+        {
+          "id": "e9",
+          "from": {
+            "nodeId": "dec_arquivo",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "conferir",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e10",
+          "from": {
+            "nodeId": "dec_arquivo",
+            "side": "w"
+          },
+          "to": {
+            "nodeId": "arquivo_vazio",
+            "side": "e"
+          }
+        },
+        {
+          "id": "e11",
+          "from": {
+            "nodeId": "conferir",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "end_ok",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e12",
+          "from": {
+            "nodeId": "sem_resultado",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "end_no",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e13",
+          "from": {
+            "nodeId": "modelo_falhou",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "end_no",
+            "side": "n"
+          }
+        },
+        {
+          "id": "e14",
+          "from": {
+            "nodeId": "arquivo_vazio",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "end_no",
+            "side": "s"
+          }
+        }
+      ]
+    }
+  ]
+}

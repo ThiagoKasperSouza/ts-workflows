@@ -111,6 +111,9 @@ export class ExecutionEngine {
   private activeEdges = new Set<string>();
   private currentEdge: string | null = null;
 
+  /** Evita repetir o aviso de executor antigo dentro da mesma sessão. */
+  private warnedStdin = false;
+
   /** Abort da execução em andamento e do comando em voo. */
   private workflowAbort: AbortController | null = null;
   private currentStepAbort: AbortController | null = null;
@@ -334,6 +337,42 @@ export class ExecutionEngine {
     return this.deps.sink.lines(nodeWindowKey(nodeId), limit);
   }
 
+  /**
+   * Envia uma resposta para o passo que estiver rodando.
+   *
+   * É o caminho usado quando a janela separada não existe (popup bloqueado):
+   * responder pelo painel não pode depender do popup ter aberto.
+   */
+  async answer(text: string): Promise<void> {
+    if (!this.currentRunId) {
+      this.deps.onToast('Nenhum comando está esperando entrada agora');
+      return;
+    }
+    const data = text.endsWith('\n') ? text : `${text}\n`;
+    const error = await sendInput(this.currentRunId, data);
+    if (error) {
+      this.deps.onToast(`Entrada não enviada: ${error}`);
+      return;
+    }
+    // Ecoa no log da execução: o que foi digitado é parte do histórico.
+    const run = this.currentRun;
+    if (run) this.deps.sink.line(runKey(run), 'command', `‹ ${data.trimEnd()}`);
+  }
+
+  /**
+   * Nó do passo que está rodando agora, ou `null`. O painel usa isso para dizer
+   * a quem a resposta vai, sem o usuário precisar adivinhar.
+   */
+  runningNode(): Node | null {
+    const steps = this.currentRun?.steps ?? [];
+    for (let index = steps.length - 1; index >= 0; index -= 1) {
+      const step = steps[index];
+      if (step?.status !== 'running') continue;
+      return this.deps.store.activePage().nodes.find((node) => node.id === step.nodeId) ?? null;
+    }
+    return null;
+  }
+
   /** Execução em andamento que envolve este nó, se houver. */
   runOfNode(nodeId: string): WorkflowRun | null {
     const current = this.currentRun;
@@ -460,6 +499,7 @@ export class ExecutionEngine {
     this.currentStepAbort = new AbortController();
     this.deps.sink.line(runKey(run), 'command', `$ ${command}`);
     this.openInput(runKey(run), node.id);
+    this.warnIfInteractiveWithoutExports(node, command);
 
     try {
       const result = await streamRun(
@@ -474,7 +514,12 @@ export class ExecutionEngine {
           }
         },
         this.currentStepAbort.signal,
-        {exports: node.exposes ?? []},
+        {
+          exports: node.exposes ?? [],
+          // o que os terminais anteriores exportaram chega como ambiente, para
+          // o comando poder usar $VAR sem inventar sintaxe de interpolação
+          env: run.vars,
+        },
       );
       this.currentRunId = null;
 
@@ -486,7 +531,16 @@ export class ExecutionEngine {
         const resumo = Object.entries(result.vars)
           .map(([name, value]) => `${name}=${value === '' ? '(vazio)' : value}`)
           .join(' · ');
-        this.deps.sink.line(runKey(run), 'meta', `↦ ${resumo}`);
+        const vazias = Object.entries(result.vars)
+          .filter(([, value]) => value === '')
+          .map(([name]) => name);
+        this.deps.sink.line(
+          runKey(run),
+          'meta',
+          vazias.length > 0
+            ? `⚠ ${vazias.join(', ')} veio${vazias.length > 1 ? 'm' : ''} vazio${vazias.length > 1 ? 's' : ''} — o comando não pediu entrada?`
+            : `↦ ${resumo}`,
+        );
       }
 
       step.durationMs = Date.now() - started;
@@ -495,11 +549,12 @@ export class ExecutionEngine {
       const vars = Object.entries(result.vars)
         .map(([name, value]) => `${name}=${value === '' ? '(vazio)' : value}`)
         .join(' · ');
+      const recovered = result.recovered ? ' (saída interrompida, resultado recuperado)' : '';
       step.detail = result.timedOut
-        ? 'tempo esgotado'
+        ? `tempo esgotado${recovered}`
         : `${result.code === 0 ? 'exit 0' : `exit ${result.code ?? result.signal}`}${
             vars ? ` · ${vars}` : ''
-          }`;
+          }${recovered}`;
       this.nodeStates.set(node.id, step.status);
       this.deps.sink.status(runKey(run), result.code === 0 ? 'ok' : 'error', step.detail);
       return {exitCode: result.code};
@@ -519,19 +574,37 @@ export class ExecutionEngine {
   }
 
   /**
+   * Comando que pede entrada mas não declara variável: funciona, mas o valor
+   * morre no shell e a decisão vai falhar com "variável X não existe". Falar
+   * agora evita a caça ao erro mais tarde.
+   */
+  private warnIfInteractiveWithoutExports(node: Node, command: string): void {
+    const asks = /\bread\s|-{1,2}password|\bcat\b/.test(command);
+    if (asks && (node.exposes ?? []).length === 0) {
+      this.deps.onToast(
+        `"${node.label}" parece pedir entrada, mas não declara variáveis expostas — preencha o campo "Variáveis expostas" para a condição conseguir usar a resposta.`,
+      );
+    }
+  }
+
+  /**
+   * Executor antigo (imagem sem stdin): o `read` receberia EOF na hora e o
+   * fluxo "funcionaria" com a variável vazia, o que é pior que falhar.
+   */
+  private warnIfStdinUnsupported(event: Extract<RunEvent, {type: 'start'}>): void {
+    if (this.warnedStdin || event.input === true) return;
+    this.warnedStdin = true;
+    this.deps.onToast(
+      'Este executor não aceita entrada (imagem antiga). Rode `docker compose up -d --build executor` — sem isso, todo `read` volta vazio.',
+    );
+  }
+
+  /**
    * O que a janela de terminal digita vai para o stdin do processo. Ligado nas
    * duas janelas (a do fluxo e a do nó) porque ambas mostram a mesma execução.
    */
   private openInput(...keys: string[]): void {
-    const handler = (data: string) => {
-      if (!this.currentRunId) {
-        this.deps.onToast('A execução não está mais esperando entrada');
-        return;
-      }
-      void sendInput(this.currentRunId, data).then((error) => {
-        if (error) this.deps.onToast(`Entrada não enviada: ${error}`);
-      });
-    };
+    const handler = (data: string) => void this.answer(data);
     for (const key of keys) this.deps.sink.setInputHandler(key, handler);
   }
 
@@ -548,6 +621,7 @@ export class ExecutionEngine {
     switch (event.type) {
       case 'start':
         this.currentRunId = event.runId;
+        this.warnIfStdinUnsupported(event);
         return;
       case 'stdout':
         this.deps.sink.line(runKey(run), 'stdout', event.data);
