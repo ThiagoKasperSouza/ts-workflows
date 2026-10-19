@@ -232,6 +232,84 @@ export async function streamRun(
   return result;
 }
 
+/** Eventos do agente de IA (`POST /api/agent`). */
+export type AgentEvent =
+  | {type: 'agent'; event: 'turn'; n: number; max: number}
+  | {type: 'agent'; event: 'thinking'; text: string}
+  | {type: 'agent'; event: 'delta'; text: string}
+  | {type: 'agent'; event: 'tool_call'; name: string; args: unknown}
+  | {type: 'agent'; event: 'tool_result'; name: string; ms: number; chars: number; text: string}
+  | {type: 'agent'; event: 'final'; text: string}
+  | {type: 'agent'; event: 'notice'; text: string}
+  | {type: 'start'; runId: string; command: string; cwd: string; timeoutMs: number; input: boolean; exports: string[]}
+  | RunEvent;
+
+export interface AgentRequest {
+  prompt: string;
+  model: string;
+  /** Fonte preferida da busca: 'Wikipédia', 'Bing', 'Ollama cloud' ou null. */
+  preferredSource?: string | null;
+  /** Modelo que redige a resposta final (padrão: um modelo sem raciocínio). */
+  writerModel?: string;
+  tools: {type: string; config: Record<string, unknown>}[];
+  maxIterations: number;
+  numPredict: number;
+  timeoutMs: number;
+}
+
+/**
+ * Roda o agente com ferramentas e devolve o mesmo formato de `streamRun`, para
+ * que o motor de workflow não saiba a diferença entre um comando e um agente.
+ */
+export async function streamAgent(
+  request: AgentRequest,
+  onEvent: (event: AgentEvent) => void,
+  signal?: AbortSignal,
+): Promise<{
+  code: number | null;
+  signal: string | null;
+  durationMs: number;
+  timedOut: boolean;
+  vars: Record<string, string>;
+  recovered: boolean;
+}> {
+  const response = await postJson('/api/agent', request, signal);
+  if (!response.ok || !response.body) {
+    const detail = await response
+      .json()
+      .then((body: {error?: string}) => body.error)
+      .catch(() => undefined);
+    throw new ExecutorUnavailableError(detail ?? `HTTP ${response.status}`);
+  }
+
+  let result = {
+    code: null as number | null,
+    signal: null as string | null,
+    durationMs: 0,
+    timedOut: false,
+    vars: {} as Record<string, string>,
+    recovered: false,
+  };
+
+  for await (const event of readNdjson(response.body, signal)) {
+    onEvent(event as AgentEvent);
+    if (event.type === 'exit') {
+      const exit = event as Extract<RunEvent, {type: 'exit'}>;
+      result = {
+        code: exit.code,
+        signal: exit.signal,
+        durationMs: exit.durationMs,
+        timedOut: exit.timedOut,
+        vars: exit.vars ?? {},
+        recovered: false,
+      };
+    }
+  }
+
+  if (signal?.aborted) throw new DOMException('execução cancelada', 'AbortError');
+  return result;
+}
+
 /** Lê um corpo NDJSON: um evento JSON por linha, decodificado incrementalmente. */
 export async function* readNdjson(
   body: ReadableStream<Uint8Array>,

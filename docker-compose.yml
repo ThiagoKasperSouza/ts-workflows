@@ -17,6 +17,11 @@ services:
       context: .
       dockerfile: server/Dockerfile
     container_name: workflow-executor
+    # a chave da Ollama (quando configurada) entra aqui, e só aqui — o
+    # executor não lê o .env sozinho, para o front nunca vê a chave
+    env_file:
+      - path: .env
+        required: false
     # o executor precisa falar com serviços do host (Ollama na 11434, por
     # exemplo) — o gateway dá o caminho em vez de adivinhar o IP do host
     extra_hosts:

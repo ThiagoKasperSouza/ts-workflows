@@ -1,4 +1,5 @@
-import {cancelRun, sendInput, streamRun, type RunEvent} from './api';
+import {cancelRun, sendInput, streamAgent, streamRun, type AgentEvent, type RunEvent} from './api';
+import {toAgentTools} from './agent-config';
 import {
   conditionOf,
   isDecision,
@@ -478,6 +479,10 @@ export class ExecutionEngine {
       return {exitCode: null};
     }
 
+    // `ai` precisa ser testado antes do "não é terminal" abaixo: o agente não é
+    // um terminal de verdade, e cairia nele como passagem silenciosa.
+    if (node.kind === 'ai') return this.executeAgent(run, node, step);
+
     if (!isTerminal(node)) {
       step.status = 'ok';
       // O losango recebe o detalhe depois, com a condição avaliada e o lado
@@ -597,6 +602,100 @@ export class ExecutionEngine {
     this.deps.onToast(
       'Este executor não aceita entrada (imagem antiga). Rode `docker compose up -d --build executor` — sem isso, todo `read` volta vazio.',
     );
+  }
+
+  /**
+   * Nó de agente: delega a tarefa ao modelo com as ferramentas configuradas.
+   *
+   * O agente é lento por natureza (modelo local pensando), então herda o mesmo
+   * pipeline do comando — stream, timeout, cancelamento, variáveis — para o
+   * motor de workflow não precisar distinguir os dois.
+   */
+  private async executeAgent(
+    run: WorkflowRun,
+    node: Node,
+    step: StepResult,
+  ): Promise<{exitCode: number | null} | null> {
+    const prompt = (node.prompt ?? '').trim();
+    if (!prompt) {
+      step.status = 'error';
+      step.detail = 'nó de agente sem pedido (prompt)';
+      this.nodeStates.set(node.id, 'error');
+      throw new Error(`O agente "${node.label}" está sem prompt`);
+    }
+
+    const started = Date.now();
+    this.currentStepAbort = new AbortController();
+    this.deps.sink.line(runKey(run), 'command', `◆ agente: ${prompt.split('\n')[0]}`);
+
+    const forward = (event: AgentEvent) => {
+      if (this.currentRunId) return;
+      if (event.type !== 'agent') return;
+      const key = runKey(run);
+      switch (event.event) {
+        case 'turn':
+          this.deps.sink.line(key, 'meta', `— volta ${event.n} de ${event.max}`);
+          return;
+        case 'thinking':
+          // o raciocínio vira progresso: um turno leva dezenas de segundos e
+          // sem isso a janela parece travada
+          this.deps.sink.line(key, 'meta', event.text.replace(/\s+/g, ' ').slice(0, 160));
+          return;
+        case 'delta':
+          this.deps.sink.line(key, 'stdout', event.text);
+          return;
+        case 'tool_call':
+          this.deps.sink.line(key, 'meta', `↻ usando ${event.name}(${JSON.stringify(event.args).slice(0, 120)})`);
+          return;
+        case 'tool_result':
+          this.deps.sink.line(key, 'meta', `↩ ${event.name}: ${event.chars} caracteres em ${event.ms} ms`);
+          return;
+        case 'notice':
+        case 'final':
+          this.deps.sink.line(key, 'meta', event.text);
+          return;
+      }
+    };
+
+    try {
+      const result = await streamAgent(
+        {
+          prompt,
+          model: node.model?.trim() || 'qwen3:4b',
+          writerModel: node.writerModel?.trim() || 'gemma3:4b',
+          tools: toAgentTools(),
+          preferredSource: node.preferredSource ?? null,
+          maxIterations: node.maxIterations ?? 3,
+          numPredict: node.numPredict ?? 2000,
+          timeoutMs: node.timeoutMs ?? 420000,
+        },
+        forward,
+        this.currentStepAbort.signal,
+      );
+      this.currentRunId = null;
+
+      step.durationMs = Date.now() - started;
+      step.vars = {...result.vars};
+      Object.assign(run.vars, result.vars);
+      step.status = result.code === 0 && !result.vars.ERRO ? 'ok' : 'error';
+      step.detail = result.vars.ERRO
+        ? result.vars.ERRO
+        : `${result.vars.ITERACOES ?? '1'} volta(s) · ${result.vars.FERRAMENTAS || 'sem ferramenta'}`;
+      this.nodeStates.set(node.id, step.status);
+      if (step.status === 'error') throw new Error(result.vars.ERRO ?? 'agente falhou');
+      return {exitCode: 0};
+    } catch (error) {
+      this.currentRunId = null;
+      const aborted = (error as Error).name === 'AbortError';
+      step.durationMs = Date.now() - started;
+      step.status = aborted ? 'canceled' : 'error';
+      step.detail = aborted ? 'cancelado' : (error as Error).message;
+      this.nodeStates.set(node.id, step.status);
+      if (!aborted) throw error;
+      return null;
+    } finally {
+      this.currentStepAbort = null;
+    }
   }
 
   /**

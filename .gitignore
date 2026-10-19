@@ -2,3 +2,4 @@ node_modules
 dist
 # saída gerada pelos exemplos de workflow
 saida/
+.env

@@ -12,6 +12,8 @@
  * processo para um container (ver docker-compose.yml).
  */
 
+import {handleAgent} from './agent.mjs';
+
 import {spawn} from 'node:child_process';
 import {existsSync} from 'node:fs';
 import {createServer} from 'node:http';
@@ -24,7 +26,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 5178);
 const HOST = process.env.HOST ?? '127.0.0.1';
 /** Raiz do workspace: nenhum comando pode escapar daqui via `cwd`. */
-const ROOT = path.resolve(process.env.WORKFLOW_ROOT ?? path.join(HERE, '..'));
+export const ROOT = path.resolve(process.env.WORKFLOW_ROOT ?? path.join(HERE, '..'));
 const MAX_OUTPUT_BYTES = Number(process.env.MAX_OUTPUT_BYTES ?? 262_144);
 const DEFAULT_TIMEOUT_MS = Number(process.env.DEFAULT_TIMEOUT_MS ?? 30_000);
 const MAX_TIMEOUT_MS = Number(process.env.MAX_TIMEOUT_MS ?? 600_000);
@@ -46,7 +48,7 @@ const DOCKER_ENABLED = process.env.ALLOW_DOCKER === '1';
 const hasDocker = () => DOCKER_ENABLED && existsSync(DOCKER_SOCKET);
 
 /** Execuções vivas, para permitir cancelamento. */
-const running = new Map();
+export const running = new Map();
 
 /**
  * Últimas execuções **terminadas**, com o resultado final.
@@ -69,9 +71,9 @@ const remember = (record) => {
 
 let runSeq = 0;
 
-const nextRunId = () => `run_${Date.now().toString(36)}_${(runSeq += 1).toString(36)}`;
+export const nextRunId = () => `run_${Date.now().toString(36)}_${(runSeq += 1).toString(36)}`;
 
-const sendJson = (res, status, payload) => {
+export const sendJson = (res, status, payload) => {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -80,7 +82,7 @@ const sendJson = (res, status, payload) => {
   res.end(body);
 };
 
-function readJson(req) {
+export function readJson(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
@@ -119,7 +121,7 @@ function resolveCwd(raw) {
   return target;
 }
 
-const clampTimeout = (raw) => {
+export const clampTimeout = (raw) => {
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) return DEFAULT_TIMEOUT_MS;
   return Math.min(MAX_TIMEOUT_MS, Math.max(1_000, value));
@@ -498,6 +500,14 @@ const server = createServer((req, res) => {
   const cancel = path.match(/^\/api\/runs\/([\w-]+)\/cancel$/);
   if (req.method === 'POST' && cancel) {
     handleCancel(res, cancel[1]);
+    return;
+  }
+
+  if (req.method === 'POST' && path === '/api/agent') {
+    handleAgent(req, res).catch((error) => {
+      if (!res.headersSent) sendJson(res, 500, {error: error.message});
+      else res.end();
+    });
     return;
   }
 

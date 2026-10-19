@@ -1,6 +1,6 @@
 export type Side = 'n' | 'e' | 's' | 'w';
 
-export type ShapeKind = 'rect' | 'ellipse' | 'diamond' | 'text' | 'terminal';
+export type ShapeKind = 'rect' | 'ellipse' | 'diamond' | 'text' | 'terminal' | 'ai';
 
 export interface Node {
   id: string;
@@ -13,6 +13,20 @@ export interface Node {
   h: number;
   /** Comando executado por nós do tipo `terminal`. Ausente nos demais tipos. */
   command?: string;
+  /** Pedido do nó de agente (`ai`). Só ele usa `prompt`. */
+  prompt?: string;
+  /** Modelo do agente. Vazio = o padrão das configurações. */
+  model?: string;
+  /** Modelo que redige a resposta final (gemma3:4b, sem raciocínio). Vazio = padrão. */
+  writerModel?: string;
+  /** Teto de voltas do agente (cada volta pode usar ferramenta). */
+  maxIterations?: number;
+  /** Fonte preferida da busca (Wikipédia, Bing, Ollama cloud). Vazio = cascata. */
+  preferredSource?: string;
+  /** Teto de tokens por turno — o qwen3 gasta hundreds pensando antes da tool call. */
+  numPredict?: number;
+  /** Timeout do agente em ms: um modelo local é muito mais lento que um comando. */
+  timeoutMs?: number;
   /**
    * Variáveis do shell que este terminal expõe ao fluxo (ex.: `IDADE`, preenchida
    * por `read`). Só elas chegam à condição da decisão; o resto da sessão do shell
@@ -75,6 +89,7 @@ export const DEFAULT_SIZE: Record<ShapeKind, {w: number; h: number}> = {
   diamond: {w: 176, h: 104},
   text: {w: 160, h: 56},
   terminal: {w: 208, h: 96},
+  ai: {w: 236, h: 112},
 };
 
 export const SHAPE_LABEL: Record<ShapeKind, string> = {
@@ -83,10 +98,14 @@ export const SHAPE_LABEL: Record<ShapeKind, string> = {
   diamond: 'Decisão',
   text: 'Texto',
   terminal: 'Terminal',
+  ai: 'Agente IA',
 };
 
 /** Comando inicial de um nó terminal recién-criado — algo que já roda. */
 export const TERMINAL_DEFAULT_COMMAND = 'echo "hello do fluxo"';
+
+/** Pedido inicial de um nó de agente recém-criado. */
+export const AI_DEFAULT_PROMPT = 'Pesquise na web sobre o que é este projeto e responda em 3 tópicos curtos.';
 
 /** Condição inicial de um losango recém-criado. */
 export const TERMINAL_DEFAULT_CONDITION = 'exit == 0';
@@ -110,6 +129,7 @@ export function createNode(kind: ShapeKind, x: number, y: number): Node {
     h,
   };
   if (kind === 'terminal') node.command = TERMINAL_DEFAULT_COMMAND;
+  if (kind === 'ai') node.prompt = AI_DEFAULT_PROMPT;
   if (kind === 'diamond') node.condition = TERMINAL_DEFAULT_CONDITION;
   return node;
 }

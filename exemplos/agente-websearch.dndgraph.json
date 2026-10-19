@@ -1,0 +1,229 @@
+{
+  "format": "dnd-graph",
+  "version": 1,
+  "exportedAt": "2026-01-01T00:00:00.000Z",
+  "activePageId": "page_agente",
+  "pages": [
+    {
+      "id": "page_agente",
+      "name": "Agente: pesquisa na web",
+      "nodes": [
+        {
+          "id": "start",
+          "kind": "ellipse",
+          "label": "Início",
+          "x": 60,
+          "y": 70,
+          "w": 168,
+          "h": 92
+        },
+        {
+          "id": "agente",
+          "kind": "ai",
+          "label": "pesquisar e resumir",
+          "x": 300,
+          "y": 60,
+          "w": 236,
+          "h": 112,
+          "prompt": "Pesquise na web o que é 'workflow orchestration' e responda em 3 tópicos curtos, em português.",
+          "model": "qwen3:4b",
+          "maxIterations": 3,
+          "writerModel": "gemma3:4b"
+        },
+        {
+          "id": "dec_resposta",
+          "kind": "diamond",
+          "label": "agente rodou?",
+          "x": 660,
+          "y": 60,
+          "w": 200,
+          "h": 112,
+          "condition": "ITERACOES > 0"
+        },
+        {
+          "id": "salvar",
+          "kind": "terminal",
+          "label": "salvar resposta",
+          "x": 990,
+          "y": 58,
+          "w": 240,
+          "h": 116,
+          "command": "mkdir -p saida; { echo \"# Resposta do agente\"; echo; echo \"- Modelo: $MODELO\"; echo \"- Voltas: $ITERACOES\"; echo \"- Ferramentas: $FERRAMENTAS\"; echo; echo \"$RESPOSTA\"; } > saida/resposta.md; TAMANHO=${#RESPOSTA}; echo \"salvo saida/resposta.md ($TAMANHO caracteres)\"",
+          "exposes": [
+            "TAMANHO"
+          ]
+        },
+        {
+          "id": "dec_arquivo",
+          "kind": "diamond",
+          "label": "arquivo tem dados?",
+          "x": 1360,
+          "y": 60,
+          "w": 210,
+          "h": 112,
+          "condition": "TAMANHO > 100"
+        },
+        {
+          "id": "conferir",
+          "kind": "terminal",
+          "label": "conferir",
+          "x": 1700,
+          "y": 62,
+          "w": 240,
+          "h": 100,
+          "command": "cat saida/resposta.md"
+        },
+        {
+          "id": "end_ok",
+          "kind": "ellipse",
+          "label": "Fim",
+          "x": 2070,
+          "y": 60,
+          "w": 168,
+          "h": 92
+        },
+        {
+          "id": "agente_falhou",
+          "kind": "terminal",
+          "label": "agente não respondeu",
+          "x": 660,
+          "y": 280,
+          "w": 250,
+          "h": 100,
+          "command": "echo \"o agente não devolveu resposta utilizável\"; echo \"modelo=$MODELO voltas=$ITERACOES\"; echo \"aumente o timeout nas configurações (Agente IA) ou troque o modelo\"; exit 0"
+        },
+        {
+          "id": "curto",
+          "kind": "terminal",
+          "label": "resposta curta",
+          "x": 1360,
+          "y": 280,
+          "w": 250,
+          "h": 100,
+          "command": "echo \"a resposta ficou curta demais ($TAMANHO caracteres)\"; cat saida/resposta.md; exit 0"
+        },
+        {
+          "id": "end_no",
+          "kind": "ellipse",
+          "label": "Fim (sem resultado)",
+          "x": 1700,
+          "y": 282,
+          "w": 190,
+          "h": 92
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "from": {
+            "nodeId": "start",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "agente",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e2",
+          "from": {
+            "nodeId": "agente",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "dec_resposta",
+            "side": "n"
+          }
+        },
+        {
+          "id": "e3",
+          "from": {
+            "nodeId": "dec_resposta",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "salvar",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e4",
+          "from": {
+            "nodeId": "dec_resposta",
+            "side": "w"
+          },
+          "to": {
+            "nodeId": "agente_falhou",
+            "side": "e"
+          }
+        },
+        {
+          "id": "e5",
+          "from": {
+            "nodeId": "salvar",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "dec_arquivo",
+            "side": "n"
+          }
+        },
+        {
+          "id": "e6",
+          "from": {
+            "nodeId": "dec_arquivo",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "conferir",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e7",
+          "from": {
+            "nodeId": "dec_arquivo",
+            "side": "w"
+          },
+          "to": {
+            "nodeId": "curto",
+            "side": "e"
+          }
+        },
+        {
+          "id": "e8",
+          "from": {
+            "nodeId": "conferir",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "end_ok",
+            "side": "w"
+          }
+        },
+        {
+          "id": "e9",
+          "from": {
+            "nodeId": "agente_falhou",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "end_no",
+            "side": "n"
+          }
+        },
+        {
+          "id": "e10",
+          "from": {
+            "nodeId": "curto",
+            "side": "e"
+          },
+          "to": {
+            "nodeId": "end_no",
+            "side": "s"
+          }
+        }
+      ]
+    }
+  ]
+}

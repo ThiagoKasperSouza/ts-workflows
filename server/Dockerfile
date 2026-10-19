@@ -18,7 +18,7 @@ RUN apk add --no-cache tini bash coreutils curl jq git docker-cli docker-cli-com
 WORKDIR /app
 
 # Só o executor é copiado para a imagem; o código do diagrama entra pelo volume.
-COPY server/index.mjs ./server/index.mjs
+COPY server/index.mjs server/agent.mjs server/search.mjs ./server/
 
 # O workspace do workflow é montado por fora (compose); este é o default.
 ENV WORKFLOW_ROOT=/workspace \

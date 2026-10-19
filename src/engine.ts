@@ -249,4 +249,5 @@ export const KIND_LABEL: Record<ShapeKind, string> = {
   diamond: 'decisão',
   text: 'texto',
   terminal: 'terminal',
+  ai: 'agente',
 };

@@ -1,4 +1,4 @@
-import {setNodeCommand, setNodeExposes} from './commands';
+import {setNodeAgentConfig, setNodeCommand, setNodeExposes} from './commands';
 import {lastStepOf, nodeWindowKey, type ExecutionEngine, type NodeRunState} from './execution';
 import type {Store} from './store';
 import type {Node} from './types';
@@ -34,6 +34,14 @@ export class NodeInspector {
   private readonly answerInput: HTMLInputElement;
   private readonly answerTarget: HTMLElement;
   private readonly fieldsEl: HTMLElement;
+  private readonly agentEl: HTMLElement;
+  private readonly promptEl: HTMLTextAreaElement;
+  private readonly modelEl: HTMLInputElement;
+  private readonly writerEl: HTMLInputElement;
+  private readonly sourceEl: HTMLSelectElement;
+  private readonly iterationsEl: HTMLInputElement;
+  private readonly numPredictEl: HTMLInputElement;
+  private readonly timeoutEl: HTMLInputElement;
 
   private currentId: string | null = null;
   /** No modo de execução o painel só informa: nada de editar comando aqui. */
@@ -61,7 +69,51 @@ export class NodeInspector {
           <button type="button" class="is-window" data-window title="Reabrir a janela do terminal">Janela</button>
         </div>
       </div>
-      <div class="is-fields">
+      <div class="is-agent" data-agent hidden>
+        <div class="is-fields">
+          <div class="is-field">
+            <label class="is-label" for="node-inspector-prompt">Pedido do agente</label>
+            <textarea id="node-inspector-prompt" class="is-input" rows="3" spellcheck="false"
+              placeholder="O que o agente deve fazer (use a ferramenta quando precisar)"></textarea>
+          </div>
+          <div class="is-field is-narrow">
+            <label class="is-label" for="node-inspector-model">Modelo</label>
+            <input id="node-inspector-model" class="is-input" placeholder="qwen3:4b (padrão)" />
+            <p class="is-help">vazio = padrão (qwen3:4b)</p>
+          </div>
+          <div class="is-field is-narrow">
+            <label class="is-label" for="node-inspector-writer">Modelo redator</label>
+            <input id="node-inspector-writer" class="is-input" placeholder="gemma3:4b (padrão)" />
+            <p class="is-help">vazio = padrão (gemma3:4b)</p>
+          </div>
+          <div class="is-field is-narrow">
+            <label class="is-label" for="node-inspector-source">Fonte preferida</label>
+            <select id="node-inspector-source" class="is-input is-select">
+              <option value="">cascata (Wikipédia → Bing → Ollama)</option>
+              <option value="Wikipédia">Wikipédia</option>
+              <option value="Bing">Bing</option>
+              <option value="Ollama cloud">Ollama cloud</option>
+            </select>
+            <p class="is-help">força uma fonte em vez da cascata</p>
+          </div>
+        </div>
+        <div class="is-fields">
+          <div class="is-field is-narrow">
+            <label class="is-label" for="node-inspector-iterations">Voltas máx.</label>
+            <input id="node-inspector-iterations" class="is-input" type="number" min="1" max="8" />
+          </div>
+          <div class="is-field is-narrow">
+            <label class="is-label" for="node-inspector-numpredict">Tokens/turno</label>
+            <input id="node-inspector-numpredict" class="is-input" type="number" min="256" max="8000" step="256" />
+          </div>
+          <div class="is-field is-narrow">
+            <label class="is-label" for="node-inspector-timeout">Timeout (s)</label>
+            <input id="node-inspector-timeout" class="is-input" type="number" min="10" max="600" />
+          </div>
+        </div>
+        <p class="is-help is-warn">Modelo local é lento: o qwen3 gasta dezenas de segundos pensando antes de cada ferramenta.</p>
+      </div>
+      <div class="is-fields" data-terminal-fields>
         <div class="is-field">
           <label class="is-label" for="node-inspector-command">Comando executado por este nó</label>
           <textarea id="node-inspector-command" class="is-input" spellcheck="false" rows="2"
@@ -95,7 +147,15 @@ export class NodeInspector {
     this.exposesEl = root.querySelector<HTMLInputElement>('#node-inspector-exposes')!;
     this.runBtn = root.querySelector<HTMLButtonElement>('[data-run]')!;
     this.cancelBtn = root.querySelector<HTMLButtonElement>('[data-cancel]')!;
-    this.fieldsEl = root.querySelector<HTMLElement>('.is-fields')!;
+    this.fieldsEl = root.querySelector<HTMLElement>('[data-terminal-fields]')!;
+    this.agentEl = root.querySelector<HTMLElement>('[data-agent]')!;
+    this.promptEl = root.querySelector<HTMLTextAreaElement>('#node-inspector-prompt')!;
+    this.modelEl = root.querySelector<HTMLInputElement>('#node-inspector-model')!;
+    this.writerEl = root.querySelector<HTMLInputElement>('#node-inspector-writer')!;
+    this.sourceEl = root.querySelector<HTMLSelectElement>('#node-inspector-source')!;
+    this.iterationsEl = root.querySelector<HTMLInputElement>('#node-inspector-iterations')!;
+    this.numPredictEl = root.querySelector<HTMLInputElement>('#node-inspector-numpredict')!;
+    this.timeoutEl = root.querySelector<HTMLInputElement>('#node-inspector-timeout')!;
     this.answerForm = root.querySelector<HTMLFormElement>('[data-answer]')!;
     this.answerInput = root.querySelector<HTMLInputElement>('#node-inspector-answer')!;
     this.answerTarget = root.querySelector<HTMLElement>('[data-answer-target]')!;
@@ -150,6 +210,28 @@ export class NodeInspector {
       if (!node || !this.editable) return;
       setNodeExposes(this.deps.store, node.id, this.exposesEl.value);
     });
+    this.promptEl.addEventListener('input', () => this.patchAgent({prompt: this.promptEl.value}));
+    this.modelEl.addEventListener('input', () => this.patchAgent({model: this.modelEl.value}));
+    this.writerEl.addEventListener('input', () => this.patchAgent({writerModel: this.writerEl.value}));
+    this.sourceEl.addEventListener('change', () => this.patchAgent({preferredSource: this.sourceEl.value || undefined}));
+    for (const [input, key, scale] of [
+      [this.iterationsEl, 'maxIterations', 1],
+      [this.numPredictEl, 'numPredict', 1],
+      [this.timeoutEl, 'timeoutMs', 1000],
+    ] as const) {
+      input.addEventListener('input', () => {
+        const raw = input.value.trim();
+        const value = raw === '' ? undefined : Number(raw) * scale;
+        this.patchAgent({[key]: value} as Partial<Node>);
+      });
+    }
+  }
+
+  /** Grava um campo do nó de agente (números vazios viram `undefined`). */
+  private patchAgent(patch: Partial<Node>): void {
+    const node = this.currentNode();
+    if (!node || node.kind !== 'ai' || !this.editable) return;
+    setNodeAgentConfig(this.deps.store, node.id, patch);
   }
 
   private currentNode(): Node | null {
@@ -177,30 +259,53 @@ export class NodeInspector {
    */
   sync(node: Node | null): void {
     const running = this.deps.engine.runningNode();
-    const terminal = node?.kind === 'terminal' ? node : null;
-    if (!terminal && !running) {
+    const configured = node?.kind === 'terminal' || node?.kind === 'ai' ? node : null;
+    // quando o nó tem valor próprio, ele ganha do padrão da configuração
+    const effectiveModel = configured?.model?.trim() || 'qwen3:4b';
+    const effectiveWriter = configured?.writerModel?.trim() || 'gemma3:4b';
+    const effectiveIterations = configured?.maxIterations ?? 3;
+    const effectiveNumPredict = configured?.numPredict ?? 2000;
+    const effectiveTimeout = configured?.timeoutMs ?? 420000;
+    if (!configured && !running) {
       this.root.hidden = true;
       this.currentId = null;
       return;
     }
 
     this.root.hidden = false;
-    const shown = terminal ?? running!;
+    const shown = configured ?? running!;
     this.currentId = shown.id;
     this.titleEl.textContent = shown.label;
 
     this.root.dataset.kind = shown.kind;
+    const isAgent = shown.kind === 'ai';
     this.fieldsEl.hidden = shown.kind !== 'terminal';
+    this.agentEl.hidden = !isAgent;
+
+    if (isAgent && document.activeElement !== this.promptEl) {
+      const value = shown.prompt ?? '';
+      if (this.promptEl.value !== value) this.promptEl.value = value;
+      const setIf = (input: HTMLInputElement, raw: unknown, fallback: string) => {
+        const text = raw === undefined ? '' : String(raw);
+        if (document.activeElement !== input && input.value !== text) input.value = text;
+        input.placeholder = fallback;
+      };
+      setIf(this.modelEl, shown.model, effectiveModel);
+      setIf(this.writerEl, shown.writerModel, effectiveWriter as unknown as string);
+      setIf(this.iterationsEl, shown.maxIterations, String(effectiveIterations));
+      setIf(this.numPredictEl, shown.numPredict, String(effectiveNumPredict));
+      setIf(this.timeoutEl, shown.timeoutMs === undefined ? undefined : Math.round(shown.timeoutMs / 1000), String(Math.round(effectiveTimeout / 1000)));
+    }
     this.answerForm.hidden = running === null;
 
-    if (terminal && document.activeElement !== this.inputEl) {
-      const command = terminal.command ?? '';
+    if (configured && document.activeElement !== this.inputEl) {
+      const command = configured.command ?? '';
       if (this.inputEl.value !== command) {
         this.inputEl.value = command;
         this.typedSinceFocus = false;
       }
       if (document.activeElement !== this.exposesEl) {
-        const exposes = (terminal.exposes ?? []).join(', ');
+        const exposes = (configured.exposes ?? []).join(', ');
         if (this.exposesEl.value !== exposes) this.exposesEl.value = exposes;
       }
     }

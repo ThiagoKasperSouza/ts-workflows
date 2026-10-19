@@ -21,7 +21,7 @@ import {PALETTE_DRAG_TYPE} from './nodes';
 
 const SIDE_LABEL: Record<Side, string> = {n: 'N', e: 'L', s: 'S', w: 'O'};
 
-const KINDS: ShapeKind[] = ['rect', 'ellipse', 'diamond', 'text', 'terminal'];
+const KINDS: ShapeKind[] = ['rect', 'ellipse', 'diamond', 'text', 'terminal', 'ai'];
 
 /** Mesma distinção clique/arrasto usada nos nós do canvas. */
 const PaletteSensor = PointerSensor.configure({
@@ -48,6 +48,8 @@ export class Sidebar {
       engine: ExecutionEngine;
       /** Consultado a cada render: o painel esconde ações de edição no modo execução. */
       isEdit: () => boolean;
+      /** Avisa que a configuração do agente mudou (re-render do painel). */
+      onConfigChange?: () => void;
       onDropShape: (kind: ShapeKind) => void;
     },
   ) {

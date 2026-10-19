@@ -48,6 +48,23 @@ export function setNodeCommand(store: Store, nodeId: string, command: string, hi
   );
 }
 
+/** Campos de configuração do nó de agente (prompt, modelo, voltas, timeout). */
+export function setNodeAgentConfig(store: Store, nodeId: string, patch: Partial<Node>): void {
+  store.update(
+    (draft) => {
+      const node = activePage(draft).nodes.find((item) => item.id === nodeId);
+      if (!node) return;
+      const target = node as unknown as Record<string, unknown>;
+      for (const [key, value] of Object.entries(patch)) {
+        // campo vazio = "usa o padrão das configurações", então some do documento
+        if (value === undefined || value === '') delete target[key];
+        else target[key] = value;
+      }
+    },
+    {history: false},
+  );
+}
+
 /**
  * Variáveis que o terminal expõe ao fluxo.
  *

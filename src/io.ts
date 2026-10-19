@@ -93,8 +93,10 @@ function shapeMarkup(node: Node): string {
       return `<polygon points="${x + w / 2},${y} ${x + w},${y + h / 2} ${x + w / 2},${y + h} ${x},${y + h / 2}" fill="${fill}" stroke="${stroke}" stroke-width="2"/>`;
     case 'text':
       return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>`;
-    case 'terminal':
-      return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="#f1f5f9" stroke="#0f172a" stroke-width="2"/>`;
+case 'terminal':
+      return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="#0f172a" stroke="#0f172a" stroke-width="2"/>`;
+    case 'ai':
+      return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="#f5f3ff" stroke="#6d28d9" stroke-width="2"/>`;
   }
 }
 
